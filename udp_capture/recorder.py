@@ -14,6 +14,14 @@ from .packets.session import PacketSessionData
 from .packets.final_classification import PacketFinalClassificationData
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS raw_packets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    received_at REAL,       -- unix timestamp (system clock)
+    packet_id   INTEGER,
+    session_uid INTEGER,
+    data        BLOB
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     session_uid   INTEGER PRIMARY KEY,
     track_name    TEXT,
@@ -87,6 +95,12 @@ class Recorder:
         # throttle lap snapshots: only write every N seconds of session time
         self._last_snapshot_time: float = -1.0
         self._snapshot_interval: float = 0.5  # seconds of game time
+
+    def store_raw(self, packet_id: int, session_uid: int, data: bytes) -> None:
+        self.conn.execute(
+            "INSERT INTO raw_packets (received_at, packet_id, session_uid, data) VALUES (?,?,?,?)",
+            (time.time(), packet_id, session_uid, data),
+        )
 
     def handle_session(self, pkt: PacketSessionData) -> None:
         uid = pkt.header.session_uid
@@ -199,4 +213,5 @@ class Recorder:
         self.conn.commit()
 
     def close(self) -> None:
+        self.conn.commit()
         self.conn.close()
