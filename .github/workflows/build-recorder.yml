@@ -59,15 +59,15 @@ jobs:
           body: |
             ## F1 25 Telemetry Recorder — ${{ github.ref_name }}
 
-            ### 下载
-            下载 `F1_Recorder.exe`，双击运行即可，无需安装任何软件。
+            ### Download
+            Download `F1_Recorder.exe` and double-click to run — no installation required.
 
-            ### 使用方法
-            1. 双击 `F1_Recorder.exe`
-            2. 按照屏幕提示在 F1 25 游戏内开启 UDP Telemetry
-            3. 比赛结束后按 `Ctrl+C` 停止录制
-            4. 将生成的 `race.zip` 上传到 Discord 频道
+            ### How to use
+            1. Double-click `F1_Recorder.exe`
+            2. Follow the on-screen instructions to enable UDP Telemetry in F1 25
+            3. Press `Ctrl+C` after the race to stop recording
+            4. Upload the generated `race.zip` to the Discord channel
 
-            ### 可信度说明
-            本 exe 由 GitHub Actions 自动从源码构建，
-            构建过程完全公开：[查看 Actions 日志](${{ github.server_url }}/${{ github.repository }}/actions)
+            ### Transparency
+            This exe is automatically built by GitHub Actions from the source code in this repository.
+            The build process is fully public: [View Actions logs](${{ github.server_url }}/${{ github.repository }}/actions)
