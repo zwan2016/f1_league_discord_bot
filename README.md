@@ -1,24 +1,24 @@
-# F1 25 联赛 Discord Bot
+# F1 25 League Discord Bot
 
-F1 25 游戏实时遥测采集 + 赛后动画 GIF 自动生成。
+Real-time telemetry capture for F1 25 + automatic post-race animated GIF generation.
 
 ---
 
-## 给录制员：快速开始
+## For Recorders: Quick Start
 
-> 录制员在比赛时运行本程序，比赛结束后把生成的文件上传到 Discord。
+> The recorder runs this program during the race, then uploads the generated file to Discord after the race ends.
 
-### 方式一：直接下载 exe（推荐，无需安装任何软件）
+### Option 1: Download the exe directly (recommended — no software installation required)
 
-1. 进入 [Releases](../../releases) 页面，下载最新的 `F1_Recorder.exe`
-2. 双击运行，按屏幕提示在 F1 25 游戏内完成 UDP 配置
-3. 开始比赛，保持程序在后台运行
-4. 比赛结束后按 `Ctrl+C`，程序自动在同目录生成 `race.zip`
-5. 将 `race.zip` 上传到 Discord 指定频道
+1. Go to the [Releases](../../releases) page and download the latest `F1_Recorder.exe`
+2. Double-click to run it and follow the on-screen instructions to configure UDP in F1 25
+3. Start the race and keep the program running in the background
+4. After the race, press `Ctrl+C` — the program automatically generates `race.zip` in the same directory
+5. Upload `race.zip` to the designated Discord channel
 
-**关于安全性**：本 exe 由 GitHub Actions 从本仓库源码自动构建，构建过程完全公开，点击 [Actions](../../actions) 页面可查看每次构建的详细日志，下载的文件与源码一一对应。
+**About security**: This exe is automatically built by GitHub Actions from this repository's source code. The build process is fully transparent — visit the [Actions](../../actions) page to view detailed logs for every build. The downloaded file corresponds directly to the source code.
 
-### 方式二：直接用 Python 运行
+### Option 2: Run with Python directly
 
 ```bash
 git clone https://github.com/zwan2016/f1_leagure_discord_bot.git
@@ -27,70 +27,70 @@ pip install -r requirements.txt
 python -m udp_capture.capture --db data/race.db
 ```
 
-### F1 25 游戏内设置
+### F1 25 In-Game Settings
 
-进入 `设置 → 遥测设置`，按下表配置：
+Go to `Settings → Telemetry Settings` and configure as follows:
 
-| 选项 | 值 |
-|------|-----|
-| UDP 遥测 | 开启 |
-| UDP 格式 | 2025 |
-| UDP IP 地址 | `127.0.0.1`（与游戏同一台电脑）或录制员的局域网 IP |
-| UDP 端口 | `20777` |
-| UDP 发送频率 | 60Hz（推荐） |
+| Option | Value |
+|--------|-------|
+| UDP Telemetry | On |
+| UDP Format | 2025 |
+| UDP IP Address | `127.0.0.1` (same PC as game) or recorder's LAN IP |
+| UDP Port | `20777` |
+| UDP Send Rate | 60Hz (recommended) |
 
 ---
 
-## 给开发者：项目结构
+## For Developers: Project Structure
 
 ```
-├── recorder_app.py              # Windows exe 入口，含游戏设置引导
+├── recorder_app.py              # Windows exe entry point, includes in-game setup guide
 ├── requirements.txt
-├── .env.example                 # Bot 环境变量模板
+├── .env.example                 # Bot environment variable template
 ├── build/
-│   └── recorder.spec            # PyInstaller 构建配置
+│   └── recorder.spec            # PyInstaller build config
 ├── .github/workflows/
-│   └── build-recorder.yml       # GitHub Actions 自动构建与发布
-├── udp_capture/                 # 遥测采集（纯标准库，无第三方依赖）
-│   ├── capture.py               # UDP 监听主循环，Ctrl+C 保存 zip
-│   ├── recorder.py              # SQLite 写入，含 Flashback 回溯处理
-│   └── packets/                 # F1 25 UDP packet 解析
-│       ├── header.py            # 通用包头（29 字节）
-│       ├── session.py           # Packet ID 1：赛道、圈数、赛事类型
-│       ├── lap_data.py          # Packet ID 2：实时位置、圈时、Pit 状态
-│       ├── event.py             # Packet ID 3：最快圈、超车、处罚、Flashback
-│       ├── participants.py      # Packet ID 4：车手名称、车队
-│       └── final_classification.py  # Packet ID 8：最终成绩
+│   └── build-recorder.yml       # GitHub Actions auto-build and release
+├── udp_capture/                 # Telemetry capture (stdlib only, no third-party deps)
+│   ├── capture.py               # UDP listener main loop, saves zip on Ctrl+C
+│   ├── recorder.py              # SQLite writer, handles Flashback rewind
+│   └── packets/                 # F1 25 UDP packet parsers
+│       ├── header.py            # Common header (29 bytes)
+│       ├── session.py           # Packet ID 1: track, laps, session type
+│       ├── lap_data.py          # Packet ID 2: live position, lap time, pit status
+│       ├── event.py             # Packet ID 3: fastest lap, overtake, penalty, flashback
+│       ├── participants.py      # Packet ID 4: driver names, teams
+│       └── final_classification.py  # Packet ID 8: final results
 ├── bot/                         # Discord Bot
-│   ├── main.py                  # Bot 入口
-│   ├── cogs/race.py             # 接收文件上传 → 解析 → 发 embed + GIF
-│   └── utils/db.py              # 异步 SQLite 查询工具
+│   ├── main.py                  # Bot entry point
+│   ├── cogs/race.py             # Receive file upload → parse → send embed + GIF
+│   └── utils/db.py              # Async SQLite query utilities
 └── visualizer/
-    └── race_animation.py        # matplotlib 动画 GIF 生成
+    └── race_animation.py        # matplotlib animated GIF generator
 ```
 
-### 本地构建 exe
+### Build exe locally
 
 ```bash
 pip install pyinstaller
 pyinstaller build/recorder.spec
-# 输出：dist/F1_Recorder.exe
+# Output: dist/F1_Recorder.exe
 ```
 
-### 运行 Bot
+### Run the Bot
 
 ```bash
-cp .env.example .env   # 填入 Discord Token 和频道 ID
+cp .env.example .env   # Fill in Discord Token and channel ID
 python -m bot.main
 ```
 
 ---
 
-## 发布新版本
+## Publishing a New Release
 
 ```bash
 git tag v1.0.0
 git push --tags
 ```
 
-GitHub Actions 自动在 Windows 环境构建 exe 并创建 Release，附件可直接下载。
+GitHub Actions automatically builds the exe in a Windows environment and creates a Release with the file ready to download.
