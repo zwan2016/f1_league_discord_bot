@@ -36,7 +36,7 @@ Go to `Settings → Telemetry Settings` and configure as follows:
 | UDP Telemetry | On |
 | UDP Format | 2025 |
 | UDP IP Address | `127.0.0.1` (same PC as game) or recorder's LAN IP |
-| UDP Port | `20777` |
+| UDP Port | `20777` (default) or the port you entered at startup |
 | UDP Send Rate | 60Hz (recommended) |
 
 ---

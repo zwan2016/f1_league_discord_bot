@@ -28,18 +28,40 @@ def _local_ip() -> str:
         return "unknown"
 
 
+DEFAULT_PORT = 20777
+
+
+def _prompt_port() -> int:
+    while True:
+        try:
+            raw = input(f"  UDP port to listen on [{DEFAULT_PORT}]: ").strip()
+            if raw == "":
+                return DEFAULT_PORT
+            port = int(raw)
+            if 1 <= port <= 65535:
+                return port
+            print("  Please enter a number between 1 and 65535.")
+        except ValueError:
+            print("  Invalid input — please enter a port number.")
+
+
 def main() -> None:
     print(BANNER)
     print("=" * 70)
     print(f"  Your local IP : {_local_ip()}")
-    print(f"  Listening on  : UDP port 20777")
+    print()
+    print("  Some setups (SimHub, Moza Portal) forward telemetry to a different")
+    print("  port. Enter the port your forwarder is sending to, or press Enter")
+    print("  to use the F1 25 default (20777).")
+    print()
+    port = _prompt_port()
     print()
     print("  In F1 25, go to:")
     print("    Settings → Telemetry Settings")
     print("    UDP Telemetry  : On")
     print("    UDP Format     : 2025")
     print("    UDP IP Address : 127.0.0.1  (same PC)  or your IP above (LAN)")
-    print("    UDP Port       : 20777")
+    print(f"    UDP Port       : {port}")
     print("    UDP Send Rate  : 60Hz  (recommended)")
     print("=" * 70)
     print()
@@ -57,8 +79,8 @@ def main() -> None:
     print()
     print("  Press Ctrl+C (or close this window) to STOP recording and save.\n")
 
-    # Patch sys.argv so capture.run() picks up our db path
-    sys.argv = ["recorder", "--db", db_path]
+    # Patch sys.argv so capture.run() picks up our db path and port
+    sys.argv = ["recorder", "--db", db_path, "--port", str(port)]
 
     try:
         from udp_capture.capture import run
