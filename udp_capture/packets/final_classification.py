@@ -32,7 +32,7 @@ class FinalClassificationData:
 
     @classmethod
     def from_bytes(cls, data: bytes, offset: int) -> "FinalClassificationData":
-        fmt = "<BBBBBBIfBBB8B8B8B"
+        fmt = "<BBBBBBIdBBB8B8B8B"
         size = struct.calcsize(fmt)
         fields = struct.unpack_from(fmt, data, offset)
         return cls(
@@ -54,7 +54,7 @@ class FinalClassificationData:
 
     @classmethod
     def size(cls) -> int:
-        return struct.calcsize("<BBBBBBIfBBB8B8B8B")
+        return struct.calcsize("<BBBBBBIdBBB8B8B8B")
 
 
 @dataclass
