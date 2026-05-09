@@ -2,7 +2,7 @@
 Run on the recorder's machine during a race:
     python -m udp_capture.capture --db data/race.db
 
-Listens on UDP port 20777, parses F1 25 packets,
+Listens on UDP, parses F1 25 packets via f1-packets library,
 writes to SQLite, then zips the db for upload.
 """
 import argparse
@@ -12,9 +12,11 @@ import sys
 import zipfile
 from pathlib import Path
 
-from .packets import PACKET_MAP
-from .packets.header import PacketHeader, HEADER_SIZE
+from f1.packets import PacketHeader, resolve
+
 from .recorder import Recorder
+
+HANDLED_PACKET_IDS = {1, 2, 3, 4, 8}
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,6 +33,11 @@ def zip_db(db_path: str) -> str:
         zf.write(db_path, Path(db_path).name)
     print(f"[recorder] Saved: {out}")
     return out
+
+
+def _to_signed_uid(uid) -> int:
+    uid = int(uid)
+    return uid if uid < 2**63 else uid - 2**64
 
 
 def run() -> None:
@@ -65,49 +72,41 @@ def run() -> None:
         except OSError:
             break
 
-        packets_received += 1
-
-        if len(data) < HEADER_SIZE:
-            continue
-
+        # Parse header to get packet_id and session_uid for raw storage
         try:
-            header = PacketHeader.from_bytes(data)
+            header = PacketHeader.from_buffer_copy(data)
         except Exception:
             continue
 
-        recorder.store_raw(header.packet_id, header.session_uid, data)
+        packet_id = int(header.packet_id)
+        session_uid = _to_signed_uid(header.session_uid)
+        recorder.store_raw(packet_id, session_uid, data)
+        packets_received += 1
 
-        packet_cls = PACKET_MAP.get(header.packet_id)
-        if packet_cls is None:
+        if packet_id not in HANDLED_PACKET_IDS:
             continue
 
         try:
-            pkt = packet_cls.from_bytes(data)
+            pkt = resolve(data)
         except Exception as e:
-            print(f"[recorder] Parse error packet_id={header.packet_id}: {e}", file=sys.stderr)
+            print(f"[recorder] Parse error packet_id={packet_id}: {e}", file=sys.stderr)
             continue
 
         packets_parsed += 1
 
         try:
-            from .packets.session import PacketSessionData
-            from .packets.participants import PacketParticipantsData
-            from .packets.lap_data import PacketLapData
-            from .packets.event import PacketEventData
-            from .packets.final_classification import PacketFinalClassificationData
-
-            if isinstance(pkt, PacketSessionData):
+            if packet_id == 1:
                 recorder.handle_session(pkt)
-            elif isinstance(pkt, PacketParticipantsData):
-                recorder.handle_participants(pkt)
-            elif isinstance(pkt, PacketLapData):
+            elif packet_id == 2:
                 recorder.handle_lap_data(pkt)
-            elif isinstance(pkt, PacketEventData):
+            elif packet_id == 3:
                 recorder.handle_event(pkt)
-            elif isinstance(pkt, PacketFinalClassificationData):
+            elif packet_id == 4:
+                recorder.handle_participants(pkt)
+            elif packet_id == 8:
                 recorder.handle_final_classification(pkt)
         except Exception as e:
-            print(f"[recorder] DB write error: {e}", file=sys.stderr)
+            print(f"[recorder] DB write error packet_id={packet_id}: {e}", file=sys.stderr)
 
     sock.close()
     recorder.close()
