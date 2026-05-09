@@ -21,7 +21,7 @@ class ParticipantData:
 
     @classmethod
     def from_bytes(cls, data: bytes, offset: int) -> "ParticipantData":
-        fmt = "<BBBBBBH48sBBHB"
+        fmt = "<BBBBBBB48sBBHB"
         size = struct.calcsize(fmt)
         fields = struct.unpack_from(fmt, data, offset)
         name = fields[7].split(b"\x00")[0].decode("utf-8", errors="replace")
@@ -42,7 +42,7 @@ class ParticipantData:
 
     @classmethod
     def size(cls) -> int:
-        return struct.calcsize("<BBBBBBH48sBBHB")
+        return struct.calcsize("<BBBBBBB48sBBHB")
 
 
 @dataclass
