@@ -23,5 +23,8 @@ class PacketHeader:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "PacketHeader":
-        fields = struct.unpack_from(HEADER_FORMAT, data)
+        fields = list(struct.unpack_from(HEADER_FORMAT, data))
+        # session_uid is uint64; convert to signed int64 for SQLite compatibility
+        if fields[6] >= 2**63:
+            fields[6] -= 2**64
         return cls(*fields)
