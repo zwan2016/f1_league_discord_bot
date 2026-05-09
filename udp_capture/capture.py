@@ -75,6 +75,8 @@ def run() -> None:
         except Exception:
             continue
 
+        recorder.store_raw(header.packet_id, header.session_uid, data)
+
         packet_cls = PACKET_MAP.get(header.packet_id)
         if packet_cls is None:
             continue
