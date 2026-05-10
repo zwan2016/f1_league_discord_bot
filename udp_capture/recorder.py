@@ -86,7 +86,17 @@ CREATE TABLE IF NOT EXISTS lap_snapshots (
     last_lap_time_ms    INTEGER,
     pit_status      INTEGER,
     num_pit_stops   INTEGER,
-    result_status   INTEGER
+    result_status   INTEGER,
+    delta_to_leader_ms  INTEGER,
+    warnings            INTEGER,
+    penalties           INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS safety_car_timeline (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_uid INTEGER,
+    session_time REAL,
+    status      INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -131,6 +141,7 @@ class Recorder:
         self._session_uid: Optional[int] = None
         self._last_snapshot_time: float = -1.0
         self._snapshot_interval: float = 0.5
+        self._last_sc_status: Optional[int] = None
 
     def store_raw(self, packet_id: int, session_uid: int, data: bytes) -> None:
         self.conn.execute(
@@ -140,15 +151,25 @@ class Recorder:
 
     def handle_session(self, pkt) -> None:
         uid = _to_signed_uid(pkt.header.session_uid)
-        if uid == self._session_uid:
-            return
-        self._session_uid = uid
-        track_name = TRACK_NAMES.get(int(pkt.track_id), f"Track {pkt.track_id}")
-        session_name = SESSION_TYPES.get(int(pkt.session_type), f"Type {pkt.session_type}")
-        self.conn.execute(
-            "INSERT OR IGNORE INTO sessions VALUES (?,?,?,?,?)",
-            (uid, track_name, session_name, int(pkt.total_laps), int(time.time())),
-        )
+        if uid != self._session_uid:
+            self._session_uid = uid
+            self._last_sc_status = None
+            track_name = TRACK_NAMES.get(int(pkt.track_id), f"Track {pkt.track_id}")
+            session_name = SESSION_TYPES.get(int(pkt.session_type), f"Type {pkt.session_type}")
+            self.conn.execute(
+                "INSERT OR IGNORE INTO sessions VALUES (?,?,?,?,?)",
+                (uid, track_name, session_name, int(pkt.total_laps), int(time.time())),
+            )
+
+        sc_status = int(pkt.safety_car_status)
+        if sc_status != self._last_sc_status:
+            self._last_sc_status = sc_status
+            t = float(pkt.header.session_time)
+            self.conn.execute(
+                "INSERT INTO safety_car_timeline (session_uid, session_time, status) VALUES (?,?,?)",
+                (uid, t, sc_status),
+            )
+
         self.conn.commit()
 
     def handle_participants(self, pkt) -> None:
@@ -176,7 +197,11 @@ class Recorder:
              int(ld.car_position), int(ld.current_lap_num),
              float(ld.lap_distance), float(ld.total_distance),
              int(ld.current_lap_time_in_ms), int(ld.last_lap_time_in_ms),
-             int(ld.pit_status), int(ld.num_pit_stops), int(ld.result_status))
+             int(ld.pit_status), int(ld.num_pit_stops), int(ld.result_status),
+             int(ld.delta_to_race_leader_minutes_part) * 60000
+             + int(ld.delta_to_race_leader_ms_part),
+             int(ld.total_warnings),
+             int(ld.penalties))
             for i, ld in enumerate(list(pkt.lap_data))
             if int(ld.result_status) in (2, 3)
         ]
@@ -184,8 +209,9 @@ class Recorder:
             """INSERT INTO lap_snapshots
                (session_uid, session_time, car_index, car_position, current_lap,
                 lap_distance, total_distance, current_lap_time_ms, last_lap_time_ms,
-                pit_status, num_pit_stops, result_status)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                pit_status, num_pit_stops, result_status,
+                delta_to_leader_ms, warnings, penalties)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             rows,
         )
         self.conn.commit()

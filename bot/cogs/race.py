@@ -127,38 +127,37 @@ class RaceCog(commands.Cog, name="Race"):
 
                 await status_msg.edit(content="🎨 Generating race animation...")
                 try:
-                    gif_path = await asyncio.get_event_loop().run_in_executor(
-                        None, self._generate_gif, db_path, session_uid, tmpdir
+                    mp4_path = await asyncio.get_event_loop().run_in_executor(
+                        None, self._generate_animation, db_path, session_uid, tmpdir
                     )
                 except Exception as e:
-                    # GIF generation is non-fatal — post results without it
-                    print(f"[race cog] GIF generation failed: {e}")
-                    gif_path = None
+                    # Animation generation is non-fatal — post results without it
+                    print(f"[race cog] Animation generation failed: {e}")
+                    mp4_path = None
 
-                if gif_path and Path(gif_path).exists():
-                    gif_file = discord.File(gif_path, filename="race_animation.gif")
+                if mp4_path and Path(mp4_path).exists():
+                    mp4_file = discord.File(mp4_path, filename="race_animation.mp4")
                     await status_msg.delete()
-                    await message.channel.send(embed=embed, file=gif_file)
+                    await message.channel.send(embed=embed, file=mp4_file)
                 else:
                     await status_msg.delete()
                     await message.channel.send(embed=embed)
 
-    def _generate_gif(self, db_path: str, session_uid: int, out_dir: str) -> str:
-        """Blocking call — runs in executor. Returns path to generated GIF."""
+    def _generate_animation(self, db_path: str, session_uid: int, out_dir: str) -> str:
+        """Blocking call — runs in executor. Returns path to generated mp4."""
         import asyncio
-        import aiosqlite
 
-        # Run async DB fetch synchronously inside the executor
         loop = asyncio.new_event_loop()
         try:
-            from bot.utils.db import get_lap_snapshots
-            snapshots = loop.run_until_complete(get_lap_snapshots(db_path, session_uid))
+            from bot.utils.db import get_lap_snapshots, get_sc_timeline
+            snapshots   = loop.run_until_complete(get_lap_snapshots(db_path, session_uid))
+            sc_timeline = loop.run_until_complete(get_sc_timeline(db_path, session_uid))
         finally:
             loop.close()
 
-        from visualizer.race_animation import build_gif
-        out_path = os.path.join(out_dir, "race_animation.gif")
-        build_gif(snapshots, out_path)
+        from visualizer.race_animation import build_mp4
+        out_path = os.path.join(out_dir, "race_animation.mp4")
+        build_mp4(snapshots, out_path, sc_timeline=sc_timeline)
         return out_path
 
     @commands.command(name="results")
