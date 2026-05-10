@@ -38,9 +38,8 @@ def _format_ms(ms: int) -> str:
 
 def _build_results_embed(session: dict, results: list, participants: list) -> discord.Embed:
     track = session["track_name"]
-    stype = session["session_type"]
     embed = discord.Embed(
-        title=f"🏁 {track} — {stype} Results",
+        title=f"🏁 {track} — Race Results",
         color=discord.Color.red(),
     )
 
