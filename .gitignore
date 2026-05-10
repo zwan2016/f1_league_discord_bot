@@ -8,3 +8,4 @@ data/recordings/
 .DS_Store
 venv/
 .venv/
+config/discord_token
