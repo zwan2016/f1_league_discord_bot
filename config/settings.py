@@ -12,6 +12,9 @@ def load_token() -> str:
     return token_file.read_text().strip()
 
 
-# The channel ID where race zip files will be posted and processed.
-# Right-click the channel in Discord (with Developer Mode on) → Copy Channel ID.
-RACE_CHANNEL_ID: int = 0  # 0 = listen in all channels
+# Channels where race zip uploads will be processed.
+# Right-click a channel in Discord (Developer Mode on) → Copy Channel ID, paste below.
+# Empty list = listen in ALL channels (useful for testing).
+RACE_CHANNEL_IDS: list[int] = [
+    # 1234567890123456789,  # e.g. #race-results
+]

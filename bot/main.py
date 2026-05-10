@@ -3,7 +3,7 @@ import asyncio
 import discord
 from discord.ext import commands
 
-from config.settings import load_token, RACE_CHANNEL_ID
+from config.settings import load_token, RACE_CHANNEL_IDS
 
 COGS = [
     "bot.cogs.race",
@@ -20,7 +20,7 @@ class F1Bot(commands.Bot):
             intents=intents,
             help_command=commands.DefaultHelpCommand(),
         )
-        self.race_channel_id = RACE_CHANNEL_ID
+        self.race_channel_ids: set[int] = set(RACE_CHANNEL_IDS)
 
     async def setup_hook(self) -> None:
         for cog in COGS:
@@ -29,10 +29,10 @@ class F1Bot(commands.Bot):
 
     async def on_ready(self) -> None:
         print(f"[bot] Logged in as {self.user} (id={self.user.id})")
-        if self.race_channel_id:
-            print(f"[bot] Watching channel id={self.race_channel_id}")
+        if self.race_channel_ids:
+            print(f"[bot] Watching channels: {self.race_channel_ids}")
         else:
-            print("[bot] RACE_CHANNEL_ID not set — listening in all channels")
+            print("[bot] No RACE_CHANNEL_IDS set — listening in all channels")
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,

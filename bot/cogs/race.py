@@ -73,8 +73,8 @@ class RaceCog(commands.Cog, name="Race"):
     async def on_message(self, message: discord.Message):
         if message.author.bot:
             return
-        race_channel_id = getattr(self.bot, "race_channel_id", 0)
-        if race_channel_id and message.channel.id != race_channel_id:
+        race_channel_ids = getattr(self.bot, "race_channel_ids", set())
+        if race_channel_ids and message.channel.id not in race_channel_ids:
             return
         if not message.attachments:
             return
