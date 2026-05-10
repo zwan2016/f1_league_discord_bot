@@ -218,6 +218,7 @@ def _render_frame(
     sc_status: int,   # 0=none 1=SC 2=VSC 3=SC ending
     n_cars: int,
     frame_idx: int,
+    pit_markers: Dict[int, List[Tuple[float, float]]] = None,
 ) -> Image.Image:
     font_hd, font_md, font_sm, font_xs = fonts
 
@@ -269,6 +270,18 @@ def _render_frame(
         pts = [(int(_dist_to_x(d, x_max)), int(y)) for d, y in pts_raw]
         draw.line(pts, fill=hc, width=2)
 
+    # Pit history markers — small blue circle with "P" on the trail
+    if pit_markers:
+        for idx, marks in pit_markers.items():
+            for dist, y in marks:
+                mx = int(_dist_to_x(dist, x_max))
+                if LEFT_W <= mx <= LEFT_W + LINE_AREA:
+                    r = 6
+                    draw.ellipse([mx - r, int(y) - r, mx + r, int(y) + r],
+                                 fill=PIT_COL, outline=(200, 240, 255))
+                    draw.text((mx, y), "P", fill=(10, 10, 22),
+                              font=fonts[3], anchor="mm")
+
     # Car icons + labels
     for car in cars:
         idx = car["car_index"]
@@ -310,9 +323,14 @@ def _render_frame(
                 draw.text((px0 + 3, yc), pen_label,
                           fill=(255, 255, 255), font=font_xs, anchor="lm")
         elif warnings > 0 and pit == 0:
-            wx = int(cx) - 16
-            if wx > LEFT_W:
-                draw.text((wx, yc), "!", fill=WARN_COL, font=font_md, anchor="mm")
+            warn_label = "!"
+            pw = int(font_xs.getlength(warn_label)) + 10
+            px0 = int(cx) - pw - 2
+            if px0 > LEFT_W:
+                draw.rectangle([px0, int(yc) - 8, px0 + pw, int(yc) + 8],
+                                fill=WARN_COL, outline=WARN_COL)
+                draw.text((px0 + pw // 2, yc), warn_label,
+                          fill=(10, 10, 22), font=font_md, anchor="mm")
 
         _draw_car_icon(draw, icon_tip, yc, colour, size=icon_sz)
 
@@ -436,11 +454,13 @@ def build_mp4(
             lap_boundary_dists[lap_n] = leader["total_distance"]
         prev_lap = lap_n
 
-    y_pos:       Dict[int, float] = {}
-    smooth_dist: Dict[int, float] = {}
-    x_max_cur:   Optional[float] = None
-    history:     Dict[int, List[Tuple[float, float]]] = defaultdict(list)
-    car_meta:    Dict[int, Dict] = {}
+    y_pos:        Dict[int, float] = {}
+    smooth_dist:  Dict[int, float] = {}
+    x_max_cur:    Optional[float] = None
+    history:      Dict[int, List[Tuple[float, float]]] = defaultdict(list)
+    pit_markers:  Dict[int, List[Tuple[float, float]]] = defaultdict(list)
+    prev_pit:     Dict[int, int] = {}
+    car_meta:     Dict[int, Dict] = {}
     max_laps = total_laps
     last_cars: List[Dict] = []
 
@@ -495,6 +515,11 @@ def build_mp4(
             for car in cars:
                 idx = car["car_index"]
                 history[idx].append((smooth_dist[idx], y_pos[idx]))
+                # Detect pit entry (pit_status 0 → 1) and record trail marker
+                cur_pit = car.get("pit_status", 0)
+                if prev_pit.get(idx, 0) == 0 and cur_pit == 1:
+                    pit_markers[idx].append((smooth_dist[idx], y_pos[idx]))
+                prev_pit[idx] = cur_pit
 
             lap = max((c["current_lap"] for c in cars), default=1)
             max_laps = max(max_laps, lap)
@@ -511,6 +536,7 @@ def build_mp4(
                 sc_status=_lookup_sc(sc_tl, t),
                 n_cars=n_cars,
                 frame_idx=frame_count,
+                pit_markers=pit_markers,
             )
             proc.stdin.write(img.tobytes())
             frame_count += 1
@@ -553,6 +579,7 @@ def build_mp4(
                     lap_boundary_dists, finish_distance, finish_distance,
                     max_laps, max_laps, times[-1],
                     fonts, sc_status=0, n_cars=n_cars, frame_idx=frame_count,
+                    pit_markers=pit_markers,
                 )
                 proc.stdin.write(img.tobytes())
                 frame_count += 1
