@@ -10,8 +10,6 @@ X axis design
           pulled measurably away from it.
 
   bar_frac = 1 – (gap_frac) ^ X_POWER   where gap_frac = 1 – dist/x_max
-  With X_POWER ≈ 0.40 a car 0.5% behind the leader (≈5 s gap) appears at
-  ~65% of bar width instead of 99.5%.
 
 History lines
 ─────────────
@@ -23,9 +21,8 @@ Lap markers + finish flag
 ─────────────────────────
   Leader's lap transitions are detected online; the total_distance at each
   lap boundary is recorded and drawn as a thin vertical line with a label.
-  The checkered finish flag uses the same sliding-in mechanic: it is drawn
-  at _dist_to_x(finish_distance, x_max) and only becomes visible once x_max
-  has grown past finish_distance (i.e. the leader crosses the line).
+  The checkered finish flag uses the same sliding-in mechanic: only visible
+  once x_max has grown past finish_distance.
 
 Outro (end sequence)
 ─────────────────────
@@ -71,21 +68,18 @@ FPS = 30
 TARGET_FRAMES = FPS * 20          # 600 frames ≈ 20 s
 
 HEADER_H   = 72
-FOOTER_H   = 44                   # taller – lap labels live here
+FOOTER_H   = 44
 LEFT_W     = 178                  # team name column
-LINE_AREA  = 840                  # x-axis pixel width  (LEFT_W + LINE_AREA = 1018)
-ICON_SIZE  = 28                   # half-length of car icon
+LINE_AREA  = 840                  # x-axis pixel width
+ICON_SIZE  = 28
 
-# Non-linear x scale: gap_frac^X_POWER.  0.40 gives clear visual separation
-# without the extreme sensitivity of 0.20 that caused P1-P2 twitching.
 X_POWER = 0.40
 
-# Smoothing
-ALPHA_X    = 0.08   # x_max camera follows leader distance
-ALPHA_Y    = 0.18   # y rank transitions
-ALPHA_DIST = 0.15   # per-car total_distance smoothing (stabilises x position)
+ALPHA_X    = 0.08
+ALPHA_Y    = 0.18
+ALPHA_DIST = 0.15
 
-OUTRO_S = 3         # seconds of end sequence (cars race to the finish line)
+OUTRO_S = 3
 
 # Colours
 BG        = (10, 10, 22)
@@ -93,11 +87,15 @@ STRIPE    = (16, 16, 32)
 TEXT      = (238, 238, 255)
 DIM       = (95, 95, 122)
 GOLD      = (255, 200, 50)
-RED_PEN   = (255, 80, 80)
 SC_COL    = (255, 210, 0)
 GRID      = (28, 28, 50)
 LAP_LINE  = (40, 40, 65)
-HIST_DIM  = 0.60  # history line brightness vs solid colour
+WARN_COL  = (255, 200, 0)
+PEN_COL   = (220, 60, 60)
+PIT_COL   = (0, 180, 255)
+HIST_DIM  = 0.60
+
+SC_LABELS = {1: "SAFETY CAR", 2: "VIRTUAL SC", 3: "SC ENDING"}
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -129,7 +127,6 @@ def _blend(a: tuple, b: tuple, t: float) -> tuple:
 def _draw_checkered_flag(draw: ImageDraw.Draw,
                          x: int, y_top: int, y_bottom: int,
                          sq: int = 7, cols: int = 2) -> None:
-    """Draw a vertical black-and-white checkered flag strip at pixel x."""
     n_rows = (y_bottom - y_top) // sq
     for row in range(n_rows):
         for col in range(cols):
@@ -141,22 +138,36 @@ def _draw_checkered_flag(draw: ImageDraw.Draw,
 
 
 def _dist_to_x(dist: float, x_max: float) -> float:
-    """Map total_distance → screen x using non-linear power scale.
-    x_min is always 0 (race origin); x_max is the leader's current distance.
-    gap_frac^X_POWER expands the near-leader zone so cars don't cluster at right.
-    """
     if x_max <= 0:
         return float(LEFT_W)
     rel = max(0.0, min(1.0, dist / x_max))
-    gap = 1.0 - rel                          # 0 = leader, 1 = completely behind
+    gap = 1.0 - rel
     return LEFT_W + (1.0 - gap ** X_POWER) * LINE_AREA
+
+
+def _fmt_gap(ms: int) -> str:
+    s = ms / 1000.0
+    if s < 60:
+        return f"+{s:.1f}s"
+    return f"+{int(s // 60)}:{s % 60:04.1f}s"
+
+
+def _lookup_sc(sc_timeline: List[Tuple[float, int]], t: float) -> int:
+    """Return the most recent safety_car_status at or before time t."""
+    status = 0
+    for ts, st in sc_timeline:
+        if ts <= t:
+            status = st
+        else:
+            break
+    return status
 
 
 # ── car icon ─────────────────────────────────────────────────────────────────
 
 def _draw_car_icon(
     draw: ImageDraw.Draw,
-    x_tip: float,   # nose (rightmost point)
+    x_tip: float,
     yc: float,
     colour: tuple,
     size: int = 28,
@@ -204,10 +215,14 @@ def _render_frame(
     total_laps: int,
     race_time: float,
     fonts: tuple,
-    sc_active: bool,
+    sc_status: int,   # 0=none 1=SC 2=VSC 3=SC ending
     n_cars: int,
+    frame_idx: int,
 ) -> Image.Image:
     font_hd, font_md, font_sm, font_xs = fonts
+
+    # Safety car: flash header background on even blink ticks
+    sc_blink = sc_status > 0 and (frame_idx // 12) % 2 == 0
 
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
@@ -222,7 +237,7 @@ def _render_frame(
             ry = HEADER_H + i * row_h
             draw.rectangle([0, ry, W, ry + row_h], fill=STRIPE)
 
-    # ── lap boundary markers ──────────────────────────────────────────────────
+    # Lap boundary markers
     for lap_n, lap_dist in lap_boundary_dists.items():
         if lap_n < 1 or lap_dist <= 0:
             continue
@@ -235,20 +250,18 @@ def _render_frame(
     draw.line([(0, HEADER_H - 1), (W, HEADER_H - 1)], fill=GRID, width=2)
     draw.line([(0, H - FOOTER_H), (W, H - FOOTER_H)], fill=GRID, width=1)
 
-    # ── checkered finish flag — slides in from right like lap markers ─────────
-    # Only visible once x_max has grown to reach finish_distance.
+    # Checkered finish flag — slides in from right like lap markers
     if x_max > 0 and finish_distance > 0 and finish_distance <= x_max:
         flag_x = int(_dist_to_x(finish_distance, x_max))
         if LEFT_W <= flag_x <= LEFT_W + LINE_AREA:
             _draw_checkered_flag(draw, flag_x, HEADER_H, H - FOOTER_H)
 
-    # ── history polylines (drawn below icons) ─────────────────────────────────
+    # History polylines
     for idx, hist in history.items():
         if len(hist) < 2:
             continue
         colour = car_meta.get(idx, {}).get("colour", DEFAULT_COLOUR)
         hc = _dim(colour, HIST_DIM)
-        # Subsample for speed; always keep newest point
         step = max(1, len(hist) // 300)
         pts_raw = hist[::step]
         if pts_raw[-1] != hist[-1]:
@@ -256,7 +269,7 @@ def _render_frame(
         pts = [(int(_dist_to_x(d, x_max)), int(y)) for d, y in pts_raw]
         draw.line(pts, fill=hc, width=2)
 
-    # ── car icons + labels ────────────────────────────────────────────────────
+    # Car icons + labels
     for car in cars:
         idx = car["car_index"]
         yc = y_pos.get(idx)
@@ -268,33 +281,73 @@ def _render_frame(
         name    = meta.get("name", "???")
         team_id = meta.get("team_id", -1)
 
-        cx = _dist_to_x(car["total_distance"], x_max)
+        cx       = _dist_to_x(car["total_distance"], x_max)
         icon_tip = cx + icon_sz
+
+        # ── pit status indicator (left of car) ────────────────────────────
+        pit = car.get("pit_status", 0)
+        if pit > 0:
+            pit_label = "PIT" if pit == 1 else "BOX"
+            pw = int(font_xs.getlength(pit_label)) + 6
+            px0 = int(cx) - pw - 2
+            if px0 > LEFT_W:
+                draw.rectangle([px0, int(yc) - 8, px0 + pw, int(yc) + 8],
+                                fill=PIT_COL, outline=PIT_COL)
+                draw.text((px0 + 3, yc), pit_label,
+                          fill=(10, 10, 22), font=font_xs, anchor="lm")
+
+        # ── warning / penalty indicator (left of car, replaces pit if both) ─
+        warnings = car.get("warnings", 0)
+        penalties = car.get("penalties", 0)
+
+        if penalties > 0:
+            pen_label = f"{penalties}s"
+            pw = int(font_xs.getlength(pen_label)) + 6
+            px0 = int(cx) - pw - 2
+            if px0 > LEFT_W:
+                draw.rectangle([px0, int(yc) - 8, px0 + pw, int(yc) + 8],
+                                fill=PEN_COL, outline=PEN_COL)
+                draw.text((px0 + 3, yc), pen_label,
+                          fill=(255, 255, 255), font=font_xs, anchor="lm")
+        elif warnings > 0 and pit == 0:
+            wx = int(cx) - 16
+            if wx > LEFT_W:
+                draw.text((wx, yc), "!", fill=WARN_COL, font=font_md, anchor="mm")
+
         _draw_car_icon(draw, icon_tip, yc, colour, size=icon_sz)
 
-        # driver name after icon
-        if icon_tip + 6 < W - 20:
-            draw.text((icon_tip + 5, yc), name[:14], fill=TEXT, font=font_md, anchor="lm")
+        # Driver name
+        text_x = icon_tip + 5
+        if text_x < W - 20:
+            draw.text((text_x, yc), name[:14], fill=TEXT, font=font_md, anchor="lm")
 
-        # PIT indicator
-        if car.get("pit_status", 0) > 0:
-            draw.text((cx + 3, yc), "PIT", fill=GOLD, font=font_xs, anchor="lm")
+            # Gap to leader (non-P1 only)
+            if car.get("car_position", 1) > 1:
+                delta_ms = car.get("delta_to_leader_ms", 0)
+                if delta_ms > 0:
+                    gap_str = _fmt_gap(delta_ms)
+                    name_w = int(font_md.getlength(name[:14]))
+                    draw.text((text_x + name_w + 6, yc), gap_str,
+                              fill=DIM, font=font_xs, anchor="lm")
 
-        # left column: rank + team name (at animated y position)
+        # Left column: rank + team name
         team_str = TEAM_NAMES.get(team_id, "???")
         draw.text((6, yc), f"P{car['car_position']}", fill=DIM, font=font_xs, anchor="lm")
         draw.text((38, yc), team_str[:12], fill=TEXT, font=font_sm, anchor="lm")
 
     # ── header ────────────────────────────────────────────────────────────────
+    if sc_blink:
+        draw.rectangle([0, 0, W, HEADER_H - 2], fill=(55, 44, 0))
     mins, secs = divmod(int(race_time), 60)
     draw.text((W // 2, HEADER_H // 2),
               f"LAP {lap} / {total_laps}    {mins}:{secs:02d}",
               fill=TEXT, font=font_hd, anchor="mm")
-    if sc_active:
-        draw.text((W - 14, HEADER_H // 2), "⚠ SAFETY CAR",
-                  fill=SC_COL, font=font_md, anchor="rm")
+    if sc_status > 0:
+        label = SC_LABELS.get(sc_status, "SAFETY CAR")
+        draw.text((W - 14, HEADER_H // 2),
+                  f"SC: {label}", fill=SC_COL, font=font_md, anchor="rm")
 
-    # ── footer: x-axis label ──────────────────────────────────────────────────
+    # ── footer ────────────────────────────────────────────────────────────────
     draw.text((LEFT_W + LINE_AREA // 2, H - FOOTER_H // 2 + 8),
               f"← {x_max / 1000:.1f} km (non-linear scale) →",
               fill=DIM, font=font_xs, anchor="mm")
@@ -323,12 +376,20 @@ def build_mp4(
     snapshots: List[Any],
     out_path: str,
     total_laps: int = 0,
-    sc_events: Optional[List[Dict]] = None,
+    sc_timeline: Optional[List[Tuple[float, int]]] = None,
 ) -> None:
+    """
+    snapshots: list of dicts with at minimum:
+        session_time, car_index, car_position, current_lap,
+        total_distance, pit_status, name, team_id
+    Optional per-car fields (added by recorder v2+):
+        delta_to_leader_ms, warnings, penalties
+    sc_timeline: sorted list of (session_time, safety_car_status) from
+        Session packets (packet_id=1).  sc_status: 0=none 1=SC 2=VSC 3=ending
+    """
     if not snapshots:
         raise ValueError("No snapshots to animate")
 
-    # Deduplicate: multiple UDP packets can share the same session_time float.
     by_time: Dict[float, Dict[int, Dict]] = defaultdict(dict)
     for s in snapshots:
         entry = dict(s) if not isinstance(s, dict) else s
@@ -337,28 +398,13 @@ def build_mp4(
     times = sorted(by_time.keys())
     step = max(1, len(times) // TARGET_FRAMES)
     times = times[::step]
-    # Always keep the very last time point so the finish is never cut off
     if times[-1] != sorted(by_time.keys())[-1]:
         times.append(sorted(by_time.keys())[-1])
 
-    # Safety car ranges
-    sc_ranges: List[tuple] = []
-    if sc_events:
-        sc_start = None
-        for ev in sorted(sc_events, key=lambda e: e["session_time"]):
-            if ev.get("event_code") == "SCAR":
-                if sc_start is None:
-                    sc_start = ev["session_time"]
-                else:
-                    sc_ranges.append((sc_start, ev["session_time"]))
-                    sc_start = None
-
-    def _sc_active(t: float) -> bool:
-        return any(a <= t <= b for a, b in sc_ranges)
+    sc_tl: List[Tuple[float, int]] = sorted(sc_timeline) if sc_timeline else []
 
     fonts = (_load_font(24), _load_font(14), _load_font(13), _load_font(11))
 
-    # Determine stable n_cars
     n_cars = 0
     for t0 in times:
         bucket = list(by_time[t0].values())
@@ -372,7 +418,7 @@ def build_mp4(
     def _target_y(rank: int) -> float:
         return HEADER_H + (rank + 0.5) * row_h
 
-    # Pre-scan: detect lap boundary distances + compute finish_distance
+    # Pre-scan: lap boundaries + finish_distance
     lap_boundary_dists: Dict[int, float] = {}
     finish_distance: float = 0.0
     prev_lap = None
@@ -390,9 +436,8 @@ def build_mp4(
             lap_boundary_dists[lap_n] = leader["total_distance"]
         prev_lap = lap_n
 
-    # Animation state
     y_pos:       Dict[int, float] = {}
-    smooth_dist: Dict[int, float] = {}   # per-car smoothed total_distance
+    smooth_dist: Dict[int, float] = {}
     x_max_cur:   Optional[float] = None
     history:     Dict[int, List[Tuple[float, float]]] = defaultdict(list)
     car_meta:    Dict[int, Dict] = {}
@@ -411,7 +456,6 @@ def build_mp4(
             cars = sorted(cars_raw, key=lambda c: c["total_distance"], reverse=True)
             last_cars = cars
 
-            # Cache car metadata on first sight
             for car in cars:
                 idx = car["car_index"]
                 if idx not in car_meta:
@@ -421,7 +465,6 @@ def build_mp4(
                         "team_id": car.get("team_id", -1),
                     }
 
-            # Smooth y positions
             for rank, car in enumerate(cars):
                 idx = car["car_index"]
                 target = _target_y(rank)
@@ -430,7 +473,6 @@ def build_mp4(
                 else:
                     y_pos[idx] += ALPHA_Y * (target - y_pos[idx])
 
-            # Smooth per-car total_distance to damp telemetry noise.
             for car in cars:
                 idx = car["car_index"]
                 raw = car["total_distance"]
@@ -439,8 +481,6 @@ def build_mp4(
                 else:
                     smooth_dist[idx] += ALPHA_DIST * (raw - smooth_dist[idx])
 
-            # x_max tracks leader distance, capped at finish_distance.
-            # Never grows past finish_distance so the flag stays at the right edge.
             leader_dist = cars[0]["total_distance"]
             if x_max_cur is None:
                 x_max_cur = leader_dist
@@ -452,7 +492,6 @@ def build_mp4(
             if finish_distance > 0:
                 x_max_cur = min(x_max_cur, finish_distance)
 
-            # Record history using smoothed distance for visual consistency
             for car in cars:
                 idx = car["car_index"]
                 history[idx].append((smooth_dist[idx], y_pos[idx]))
@@ -460,7 +499,6 @@ def build_mp4(
             lap = max((c["current_lap"] for c in cars), default=1)
             max_laps = max(max_laps, lap)
 
-            # Pass smoothed distances so the renderer uses stable x positions
             cars_display = [dict(c, total_distance=smooth_dist.get(c["car_index"],
                                                                     c["total_distance"]))
                             for c in cars]
@@ -469,15 +507,15 @@ def build_mp4(
                 cars_display, y_pos, history, car_meta,
                 lap_boundary_dists, finish_distance, x_max_cur,
                 lap, max_laps, t,
-                fonts, sc_active=_sc_active(t), n_cars=n_cars,
+                fonts,
+                sc_status=_lookup_sc(sc_tl, t),
+                n_cars=n_cars,
+                frame_idx=frame_count,
             )
             proc.stdin.write(img.tobytes())
             frame_count += 1
 
-        # ── Outro: each car moves at uniform speed toward finish_distance ─────
-        # All cars share the same speed; the car furthest from finish arrives
-        # last (at exactly OUTRO_S seconds).  History extends each frame so
-        # trails never break.
+        # Outro: uniform speed toward finish_distance
         if x_max_cur is not None and last_cars:
             outro_smooth = dict(smooth_dist)
             outro_ypos   = dict(y_pos)
@@ -491,12 +529,10 @@ def build_mp4(
             )
             speed = max_gap / (FPS * OUTRO_S) if max_gap > 0 else 0.0
 
-            for _frame_i in range(FPS * OUTRO_S):
-                # Advance every car by the same speed, stop at finish
+            for _fi in range(FPS * OUTRO_S):
                 for idx in list(outro_smooth):
                     outro_smooth[idx] = min(outro_smooth[idx] + speed, finish_distance)
 
-                # Re-sort by current distance
                 outro_cars = sorted(
                     [dict(c, total_distance=outro_smooth.get(c["car_index"],
                                                               c["total_distance"]))
@@ -504,13 +540,10 @@ def build_mp4(
                     key=lambda c: c["total_distance"], reverse=True,
                 )
 
-                # Smooth y positions to reflect updated ranking
                 for rank, car in enumerate(outro_cars):
                     idx = car["car_index"]
-                    target = _target_y(rank)
-                    outro_ypos[idx] += ALPHA_Y * (target - outro_ypos[idx])
+                    outro_ypos[idx] += ALPHA_Y * (_target_y(rank) - outro_ypos[idx])
 
-                # Extend history so trails continue through the outro
                 for car in outro_cars:
                     idx = car["car_index"]
                     outro_history[idx].append((outro_smooth[idx], outro_ypos[idx]))
@@ -519,7 +552,7 @@ def build_mp4(
                     outro_cars, outro_ypos, outro_history, car_meta,
                     lap_boundary_dists, finish_distance, finish_distance,
                     max_laps, max_laps, times[-1],
-                    fonts, sc_active=False, n_cars=n_cars,
+                    fonts, sc_status=0, n_cars=n_cars, frame_idx=frame_count,
                 )
                 proc.stdin.write(img.tobytes())
                 frame_count += 1
@@ -542,8 +575,8 @@ def build_gif(
     snapshots: List[Any],
     out_path: str,
     total_laps: int = 0,
-    sc_events: Optional[List[Dict]] = None,
+    sc_timeline: Optional[List[Tuple[float, int]]] = None,
 ) -> None:
     mp4 = out_path.replace(".gif", ".mp4") if out_path.endswith(".gif") else out_path + ".mp4"
     print(f"[visualizer] → {mp4}")
-    build_mp4(snapshots, mp4, total_laps=total_laps, sc_events=sc_events)
+    build_mp4(snapshots, mp4, total_laps=total_laps, sc_timeline=sc_timeline)
