@@ -149,20 +149,26 @@ class RaceCog(commands.Cog, name="Race"):
 
         loop = asyncio.new_event_loop()
         try:
-            from bot.utils.db import get_session_info, get_lap_snapshots, get_sc_timeline
-            session_info = loop.run_until_complete(get_session_info(db_path, session_uid))
-            snapshots    = loop.run_until_complete(get_lap_snapshots(db_path, session_uid))
-            sc_timeline  = loop.run_until_complete(get_sc_timeline(db_path, session_uid))
+            from bot.utils.db import get_session_info, get_lap_snapshots, get_sc_timeline, get_final_results, get_ftlp_timeline
+            session_info  = loop.run_until_complete(get_session_info(db_path, session_uid))
+            snapshots     = loop.run_until_complete(get_lap_snapshots(db_path, session_uid))
+            sc_timeline   = loop.run_until_complete(get_sc_timeline(db_path, session_uid))
+            final_results = loop.run_until_complete(get_final_results(db_path, session_uid))
+            ftlp_timeline = loop.run_until_complete(get_ftlp_timeline(db_path, session_uid))
         finally:
             loop.close()
 
         track_id   = session_info["track_id"]   if session_info and "track_id"   in session_info.keys() else -1
         track_name = session_info["track_name"] if session_info and "track_name" in session_info.keys() else ""
 
+        final_positions = {r["car_index"]: r["position"] for r in final_results} if final_results else None
+
         from visualizer.race_animation import build_mp4
         out_path = os.path.join(out_dir, "race_animation.mp4")
         build_mp4(snapshots, out_path, sc_timeline=sc_timeline,
-                  track_id=track_id, track_name=track_name)
+                  track_id=track_id, track_name=track_name,
+                  final_positions=final_positions,
+                  ftlp_timeline=ftlp_timeline)
         return out_path
 
     @commands.command(name="results")
