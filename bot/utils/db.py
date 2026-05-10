@@ -55,3 +55,13 @@ async def get_lap_snapshots(db_path: str, session_uid: int) -> List[Any]:
            ORDER BY ls.session_time, ls.car_index""",
         (session_uid,),
     )
+
+
+async def get_sc_timeline(db_path: str, session_uid: int) -> List[tuple]:
+    """Safety car status changes as [(session_time, status)] sorted by time."""
+    rows = await fetchall(
+        db_path,
+        "SELECT session_time, status FROM safety_car_timeline WHERE session_uid=? ORDER BY session_time",
+        (session_uid,),
+    )
+    return [(r["session_time"], r["status"]) for r in rows]
