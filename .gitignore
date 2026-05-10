@@ -10,3 +10,4 @@ venv/
 .venv/
 config/discord_token
 config/channels
+config/roles

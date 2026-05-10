@@ -16,16 +16,71 @@ from bot.utils.db import get_session_info, get_final_results, get_participants
 
 
 ALLOWED_EXTENSIONS = {".zip", ".db"}
+MAX_UPLOAD_BYTES   = 50 * 1024 * 1024   # 50 MB — reject before download
+MAX_UNZIP_BYTES    = 200 * 1024 * 1024  # 200 MB — reject oversized zip contents
+SQLITE_MAGIC       = b"SQLite format 3\x00"
+
+
+def _check_role(message: discord.Message, allowed_roles: set[str]) -> bool:
+    """Return True if author has at least one of the allowed roles (or no restriction)."""
+    if not allowed_roles:
+        return True
+    author_roles = {r.name for r in getattr(message.author, "roles", [])}
+    return bool(author_roles & allowed_roles)
+
+
+def _validate_zip(data: bytes) -> str:
+    """
+    Validate zip contents and return the name of the single .db file inside.
+    Raises ValueError with a human-readable reason on any problem.
+    """
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        raise ValueError("File is not a valid zip archive.")
+
+    infos = zf.infolist()
+
+    # No path traversal
+    for info in infos:
+        if ".." in info.filename or info.filename.startswith("/"):
+            raise ValueError("Zip contains suspicious paths.")
+
+    # Only .db files allowed inside
+    db_files = [i for i in infos if i.filename.endswith(".db")]
+    non_db   = [i for i in infos if not i.filename.endswith(".db")]
+    if non_db:
+        raise ValueError(f"Zip contains unexpected files: {[i.filename for i in non_db]}")
+    if not db_files:
+        raise ValueError("No .db file found inside the zip.")
+    if len(db_files) > 1:
+        raise ValueError("Zip contains more than one .db file.")
+
+    # Uncompressed size check
+    total_uncompressed = sum(i.file_size for i in infos)
+    if total_uncompressed > MAX_UNZIP_BYTES:
+        raise ValueError(
+            f"Uncompressed content is too large "
+            f"({total_uncompressed // 1024 // 1024} MB > {MAX_UNZIP_BYTES // 1024 // 1024} MB limit)."
+        )
+
+    return db_files[0].filename
 
 
 def _extract_db(attachment_bytes: bytes, dest_dir: str) -> str:
-    """Return path to extracted .db file."""
+    """Validate, extract, and return path to the .db file."""
+    db_name = _validate_zip(attachment_bytes)
     with zipfile.ZipFile(io.BytesIO(attachment_bytes)) as zf:
-        for name in zf.namelist():
-            if name.endswith(".db"):
-                zf.extract(name, dest_dir)
-                return os.path.join(dest_dir, name)
-    raise ValueError("No .db file found inside the zip.")
+        zf.extract(db_name, dest_dir)
+    db_path = os.path.join(dest_dir, db_name)
+
+    # Validate SQLite magic bytes
+    with open(db_path, "rb") as f:
+        magic = f.read(len(SQLITE_MAGIC))
+    if magic != SQLITE_MAGIC:
+        raise ValueError("Extracted file is not a valid SQLite database.")
+
+    return db_path
 
 
 def _format_ms(ms: int) -> str:
@@ -72,11 +127,17 @@ class RaceCog(commands.Cog, name="Race"):
     async def on_message(self, message: discord.Message):
         if message.author.bot:
             return
+
         race_channel_ids = getattr(self.bot, "race_channel_ids", set())
         if race_channel_ids and message.channel.id not in race_channel_ids:
             return
+
         if not message.attachments:
             return
+
+        allowed_roles = getattr(self.bot, "allowed_roles", set())
+        if not _check_role(message, allowed_roles):
+            return  # silently ignore — no error message to avoid spam
 
         for attachment in message.attachments:
             ext = Path(attachment.filename).suffix.lower()
@@ -89,6 +150,15 @@ class RaceCog(commands.Cog, name="Race"):
         self, message: discord.Message, attachment: discord.Attachment
     ) -> None:
         async with self.processing_lock:
+            # File size check before downloading
+            if attachment.size > MAX_UPLOAD_BYTES:
+                await message.reply(
+                    f"❌ File too large ({attachment.size // 1024 // 1024} MB). "
+                    f"Max allowed: {MAX_UPLOAD_BYTES // 1024 // 1024} MB.",
+                    mention_author=False,
+                )
+                return
+
             status_msg = await message.reply(
                 "📡 Recording received — extracting data...", mention_author=False
             )
@@ -105,6 +175,15 @@ class RaceCog(commands.Cog, name="Race"):
                     else:
                         db_path = os.path.join(tmpdir, attachment.filename)
                         Path(db_path).write_bytes(data)
+                        # Validate SQLite magic bytes for direct .db uploads too
+                        with open(db_path, "rb") as f:
+                            magic = f.read(len(SQLITE_MAGIC))
+                        if magic != SQLITE_MAGIC:
+                            await status_msg.edit(content="❌ File is not a valid SQLite database.")
+                            return
+                except ValueError as e:
+                    await status_msg.edit(content=f"❌ {e}")
+                    return
                 except Exception as e:
                     await status_msg.edit(content=f"❌ Could not read recording: {e}")
                     return
@@ -130,7 +209,6 @@ class RaceCog(commands.Cog, name="Race"):
                         None, self._generate_animation, db_path, session_uid, tmpdir
                     )
                 except Exception as e:
-                    # Animation generation is non-fatal — post results without it
                     print(f"[race cog] Animation generation failed: {e}")
                     mp4_path = None
 
