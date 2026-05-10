@@ -80,7 +80,6 @@ def run() -> None:
 
         packet_id = int(header.packet_id)
         session_uid = _to_signed_uid(header.session_uid)
-        recorder.store_raw(packet_id, session_uid, data)
         packets_received += 1
 
         if packet_id not in HANDLED_PACKET_IDS:
