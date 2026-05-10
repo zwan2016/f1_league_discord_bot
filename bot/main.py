@@ -1,11 +1,9 @@
 import asyncio
-import os
 
 import discord
 from discord.ext import commands
-from dotenv import load_dotenv
 
-load_dotenv()
+from config.settings import load_token, RACE_CHANNEL_ID
 
 COGS = [
     "bot.cogs.race",
@@ -22,6 +20,7 @@ class F1Bot(commands.Bot):
             intents=intents,
             help_command=commands.DefaultHelpCommand(),
         )
+        self.race_channel_id = RACE_CHANNEL_ID
 
     async def setup_hook(self) -> None:
         for cog in COGS:
@@ -30,6 +29,10 @@ class F1Bot(commands.Bot):
 
     async def on_ready(self) -> None:
         print(f"[bot] Logged in as {self.user} (id={self.user.id})")
+        if self.race_channel_id:
+            print(f"[bot] Watching channel id={self.race_channel_id}")
+        else:
+            print("[bot] RACE_CHANNEL_ID not set — listening in all channels")
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
@@ -45,9 +48,7 @@ class F1Bot(commands.Bot):
 
 
 async def main() -> None:
-    token = os.environ.get("DISCORD_TOKEN")
-    if not token:
-        raise RuntimeError("DISCORD_TOKEN not set in environment")
+    token = load_token()
     bot = F1Bot()
     async with bot:
         await bot.start(token)
