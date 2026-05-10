@@ -139,9 +139,29 @@ TRACK_FLAGS: Dict[int, str] = {
 
 _FLAGS_DIR = Path(__file__).parent / "flags"
 
+# Fallback: track_name substring → flag code (covers old DBs without track_id column)
+_TRACK_NAME_FLAGS: Dict[str, str] = {
+    "melbourne": "au", "paul ricard": "fr", "shanghai": "cn",
+    "bahrain": "bh", "sakhir": "bh", "catalunya": "es", "monaco": "mc",
+    "montreal": "ca", "silverstone": "gb", "hockenheim": "de",
+    "hungaroring": "hu", "spa": "be", "monza": "it", "singapore": "sg",
+    "suzuka": "jp", "abu dhabi": "ae", "texas": "us", "cota": "us",
+    "brazil": "br", "interlagos": "br", "austria": "at", "sochi": "ru",
+    "mexico": "mx", "baku": "az", "azerbaijan": "az", "zandvoort": "nl",
+    "imola": "it", "portim": "pt", "jeddah": "sa", "miami": "us",
+    "las vegas": "us", "losail": "qa", "qatar": "qa", "hanoi": "vn",
+}
 
-def _load_flag(track_id: int, height: int = 36) -> Optional[Image.Image]:
+
+def _load_flag(track_id: int, track_name: str = "", height: int = 36) -> Optional[Image.Image]:
     code = TRACK_FLAGS.get(track_id)
+    if not code and track_name:
+        code = _TRACK_NAME_FLAGS.get(track_name.lower())
+        if not code:
+            for key, val in _TRACK_NAME_FLAGS.items():
+                if key in track_name.lower():
+                    code = val
+                    break
     if not code:
         return None
     path = _FLAGS_DIR / f"{code}.png"
@@ -528,7 +548,7 @@ def build_mp4(
 
     sc_tl:   List[Tuple[float, int]] = sorted(sc_timeline)   if sc_timeline   else []
     ftlp_tl: List[Tuple[float, int]] = sorted(ftlp_timeline) if ftlp_timeline else []
-    flag_img = _load_flag(track_id)
+    flag_img = _load_flag(track_id, track_name)
 
     fonts = (_load_font(24), _load_font(14), _load_font(13), _load_font(11))
 
