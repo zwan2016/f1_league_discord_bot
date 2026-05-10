@@ -94,6 +94,7 @@ LAP_LINE  = (40, 40, 65)
 WARN_COL  = (255, 200, 0)
 PEN_COL   = (220, 60, 60)
 PIT_COL   = (0, 180, 255)
+FL_COL    = (175, 0, 255)
 HIST_DIM  = 0.60
 
 SC_LABELS = {1: "SAFETY CAR", 2: "VIRTUAL SC", 3: "SC ENDING"}
@@ -215,6 +216,17 @@ def _lookup_sc(sc_timeline: List[Tuple[float, int]], t: float) -> int:
     return status
 
 
+def _lookup_fl(ftlp_timeline: List[Tuple[float, int]], t: float) -> Optional[int]:
+    """Return the car_index currently holding fastest lap at time t, or None."""
+    holder = None
+    for ts, idx in ftlp_timeline:
+        if ts <= t:
+            holder = idx
+        else:
+            break
+    return holder
+
+
 # ── car icon ─────────────────────────────────────────────────────────────────
 
 def _draw_car_icon(
@@ -273,6 +285,7 @@ def _render_frame(
     pit_markers: Dict[int, List[Tuple[float, float]]] = None,
     flag_img: Optional[Image.Image] = None,
     track_name: str = "",
+    fl_holder: Optional[int] = None,
 ) -> Image.Image:
     font_hd, font_md, font_sm, font_xs = fonts
 
@@ -394,13 +407,23 @@ def _render_frame(
             draw.text((text_x, yc), name[:14], fill=TEXT, font=font_md, anchor="lm")
 
             # Gap to leader (non-P1 only)
+            gap_end_x = text_x + int(font_md.getlength(name[:14]))
             if car.get("car_position", 1) > 1:
                 delta_ms = car.get("delta_to_leader_ms", 0)
                 if delta_ms > 0:
                     gap_str = _fmt_gap(delta_ms)
-                    name_w = int(font_md.getlength(name[:14]))
-                    draw.text((text_x + name_w + 6, yc), gap_str,
+                    draw.text((gap_end_x + 6, yc), gap_str,
                               fill=DIM, font=font_xs, anchor="lm")
+                    gap_end_x += 6 + int(font_xs.getlength(gap_str))
+
+            # Fastest lap badge
+            if fl_holder is not None and idx == fl_holder:
+                fl_x = gap_end_x + 6
+                fl_w = int(font_xs.getlength("FL")) + 6
+                draw.rectangle([fl_x, int(yc) - 7, fl_x + fl_w, int(yc) + 7],
+                                fill=FL_COL)
+                draw.text((fl_x + 3, yc), "FL", fill=(255, 255, 255),
+                          font=font_xs, anchor="lm")
 
         # Left column: rank + team name
         team_str = TEAM_NAMES.get(team_id, "???")
@@ -460,6 +483,8 @@ def build_mp4(
     sc_timeline: Optional[List[Tuple[float, int]]] = None,
     track_id: int = -1,
     track_name: str = "",
+    final_positions: Optional[Dict[int, int]] = None,
+    ftlp_timeline: Optional[List[Tuple[float, int]]] = None,
 ) -> None:
     """
     snapshots: list of dicts with at minimum:
@@ -484,7 +509,8 @@ def build_mp4(
     if times[-1] != sorted(by_time.keys())[-1]:
         times.append(sorted(by_time.keys())[-1])
 
-    sc_tl: List[Tuple[float, int]] = sorted(sc_timeline) if sc_timeline else []
+    sc_tl:   List[Tuple[float, int]] = sorted(sc_timeline)   if sc_timeline   else []
+    ftlp_tl: List[Tuple[float, int]] = sorted(ftlp_timeline) if ftlp_timeline else []
     flag_img = _load_flag(track_id)
 
     fonts = (_load_font(24), _load_font(14), _load_font(13), _load_font(11))
@@ -605,11 +631,13 @@ def build_mp4(
                 pit_markers=pit_markers,
                 flag_img=flag_img,
                 track_name=track_name,
+                fl_holder=_lookup_fl(ftlp_tl, t),
             )
             proc.stdin.write(img.tobytes())
             frame_count += 1
 
-        # Outro: uniform speed toward finish_distance
+        # Outro: uniform speed toward finish_distance; Y positions re-sort to
+        # final classification order as each car crosses the line.
         if x_max_cur is not None and last_cars:
             outro_smooth = dict(smooth_dist)
             outro_ypos   = dict(y_pos)
@@ -622,10 +650,13 @@ def build_mp4(
                 default=0.0,
             )
             speed = max_gap / (FPS * OUTRO_S) if max_gap > 0 else 0.0
+            crossed: set = set()   # car indices that have reached finish_distance
 
             for _fi in range(FPS * OUTRO_S):
                 for idx in list(outro_smooth):
                     outro_smooth[idx] = min(outro_smooth[idx] + speed, finish_distance)
+                    if outro_smooth[idx] >= finish_distance:
+                        crossed.add(idx)
 
                 outro_cars = sorted(
                     [dict(c, total_distance=outro_smooth.get(c["car_index"],
@@ -634,13 +665,34 @@ def build_mp4(
                     key=lambda c: c["total_distance"], reverse=True,
                 )
 
-                for rank, car in enumerate(outro_cars):
-                    idx = car["car_index"]
-                    outro_ypos[idx] += ALPHA_Y * (_target_y(rank) - outro_ypos[idx])
+                # Update P# label to final position once a car has crossed
+                if final_positions:
+                    outro_cars = [
+                        dict(c, car_position=final_positions[c["car_index"]])
+                        if c["car_index"] in crossed and c["car_index"] in final_positions
+                        else c
+                        for c in outro_cars
+                    ]
 
+                # Y target: final classified position for crossed cars,
+                # distance-based rank for cars still racing
+                dist_rank = {car["car_index"]: rank
+                             for rank, car in enumerate(outro_cars)}
                 for car in outro_cars:
                     idx = car["car_index"]
-                    outro_history[idx].append((outro_smooth[idx], outro_ypos[idx]))
+                    if idx in crossed and final_positions and idx in final_positions:
+                        target = _target_y(final_positions[idx] - 1)
+                    else:
+                        target = _target_y(dist_rank[idx])
+                    outro_ypos[idx] += ALPHA_Y * (target - outro_ypos[idx])
+
+                # Only extend history for cars still racing — crossed cars'
+                # trails are frozen at their crossing position so the
+                # Y-adjustment doesn't show up on the trajectory lines.
+                for car in outro_cars:
+                    idx = car["car_index"]
+                    if idx not in crossed:
+                        outro_history[idx].append((outro_smooth[idx], outro_ypos[idx]))
 
                 img = _render_frame(
                     outro_cars, outro_ypos, outro_history, car_meta,
@@ -648,6 +700,7 @@ def build_mp4(
                     max_laps, max_laps, times[-1],
                     fonts, sc_status=0, n_cars=n_cars, frame_idx=frame_count,
                     pit_markers=pit_markers, flag_img=flag_img, track_name=track_name,
+                    fl_holder=_lookup_fl(ftlp_tl, times[-1]),
                 )
                 proc.stdin.write(img.tobytes())
                 frame_count += 1

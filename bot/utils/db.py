@@ -57,6 +57,16 @@ async def get_lap_snapshots(db_path: str, session_uid: int) -> List[Any]:
     )
 
 
+async def get_ftlp_timeline(db_path: str, session_uid: int) -> List[tuple]:
+    """Fastest lap events as [(session_time, vehicle_idx)] sorted by time."""
+    rows = await fetchall(
+        db_path,
+        "SELECT session_time, vehicle_idx FROM events WHERE session_uid=? AND event_code='FTLP' ORDER BY session_time",
+        (session_uid,),
+    )
+    return [(r["session_time"], r["vehicle_idx"]) for r in rows]
+
+
 async def get_sc_timeline(db_path: str, session_uid: int) -> List[tuple]:
     """Safety car status changes as [(session_time, status)] sorted by time."""
     rows = await fetchall(
