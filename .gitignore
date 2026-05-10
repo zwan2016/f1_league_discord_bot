@@ -9,3 +9,4 @@ data/recordings/
 venv/
 .venv/
 config/discord_token
+config/channels

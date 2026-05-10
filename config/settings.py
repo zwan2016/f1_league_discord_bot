@@ -1,9 +1,12 @@
-# Bot configuration — edit this file to configure the bot.
+# Bot configuration — committed, no secrets here.
 from pathlib import Path
 
-# Discord bot token — read from the sibling file, never committed.
+_CONFIG_DIR = Path(__file__).parent
+
+
 def load_token() -> str:
-    token_file = Path(__file__).parent / "discord_token"
+    """Read Discord bot token from config/discord_token (gitignored)."""
+    token_file = _CONFIG_DIR / "discord_token"
     if not token_file.exists():
         raise FileNotFoundError(
             f"Discord token not found at {token_file}. "
@@ -12,9 +15,14 @@ def load_token() -> str:
     return token_file.read_text().strip()
 
 
-# Channels where race zip uploads will be processed.
-# Right-click a channel in Discord (Developer Mode on) → Copy Channel ID, paste below.
-# Empty list = listen in ALL channels (useful for testing).
-RACE_CHANNEL_IDS: list[int] = [
-    # 1234567890123456789,  # e.g. #race-results
-]
+def load_race_channel_ids() -> set[int]:
+    """Read channel IDs from config/channels (gitignored), one per line."""
+    channels_file = _CONFIG_DIR / "channels"
+    if not channels_file.exists():
+        return set()
+    ids = set()
+    for line in channels_file.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            ids.add(int(line))
+    return ids

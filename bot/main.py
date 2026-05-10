@@ -3,7 +3,7 @@ import asyncio
 import discord
 from discord.ext import commands
 
-from config.settings import load_token, RACE_CHANNEL_IDS
+from config.settings import load_token, load_race_channel_ids
 
 COGS = [
     "bot.cogs.race",
@@ -20,7 +20,7 @@ class F1Bot(commands.Bot):
             intents=intents,
             help_command=commands.DefaultHelpCommand(),
         )
-        self.race_channel_ids: set[int] = set(RACE_CHANNEL_IDS)
+        self.race_channel_ids: set[int] = load_race_channel_ids()
 
     async def setup_hook(self) -> None:
         for cog in COGS:
