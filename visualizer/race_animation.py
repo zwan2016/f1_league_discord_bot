@@ -98,7 +98,7 @@ PIT_COL   = (0, 180, 255)
 FL_COL    = (175, 0, 255)
 HIST_DIM  = 0.60
 
-SC_LABELS = {1: "SAFETY CAR", 2: "VIRTUAL SC", 3: "SC ENDING"}
+SC_LABELS = {1: "SAFETY CAR", 2: "VIRTUAL SAFETY CAR", 3: "SC ENDING"}
 
 # track_id (from F1 25 UDP) → ISO 3166-1 alpha-2 country code
 TRACK_FLAGS: Dict[int, str] = {
