@@ -35,6 +35,7 @@ Output: mp4 via ffmpeg subprocess (ffmpeg must be on PATH).
 import os
 import subprocess
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
@@ -96,6 +97,57 @@ PIT_COL   = (0, 180, 255)
 HIST_DIM  = 0.60
 
 SC_LABELS = {1: "SAFETY CAR", 2: "VIRTUAL SC", 3: "SC ENDING"}
+
+# track_id (from F1 25 UDP) → ISO 3166-1 alpha-2 country code
+TRACK_FLAGS: Dict[int, str] = {
+    0:  "au",   # Melbourne
+    1:  "fr",   # Paul Ricard
+    2:  "cn",   # Shanghai
+    3:  "bh",   # Sakhir (Bahrain)
+    4:  "es",   # Catalunya
+    5:  "mc",   # Monaco
+    6:  "ca",   # Montreal
+    7:  "gb",   # Silverstone
+    8:  "de",   # Hockenheim
+    9:  "hu",   # Hungaroring
+    10: "be",   # Spa
+    11: "it",   # Monza
+    12: "sg",   # Singapore
+    13: "jp",   # Suzuka
+    14: "ae",   # Abu Dhabi
+    15: "us",   # Texas (COTA)
+    16: "br",   # Brazil (Interlagos)
+    17: "at",   # Austria (Red Bull Ring)
+    18: "ru",   # Sochi
+    19: "mx",   # Mexico City
+    20: "az",   # Baku
+    21: "bh",   # Sakhir Short
+    22: "gb",   # Silverstone Short
+    23: "us",   # Texas Short
+    24: "jp",   # Suzuka Short
+    25: "vn",   # Hanoi
+    26: "nl",   # Zandvoort
+    27: "it",   # Imola
+    28: "pt",   # Portimão
+    29: "sa",   # Jeddah
+    30: "us",   # Miami
+    31: "us",   # Las Vegas
+    32: "qa",   # Losail (Qatar)
+}
+
+_FLAGS_DIR = Path(__file__).parent / "flags"
+
+
+def _load_flag(track_id: int, height: int = 36) -> Optional[Image.Image]:
+    code = TRACK_FLAGS.get(track_id)
+    if not code:
+        return None
+    path = _FLAGS_DIR / f"{code}.png"
+    if not path.exists():
+        return None
+    img = Image.open(path).convert("RGBA")
+    w = int(img.width * height / img.height)
+    return img.resize((w, height), Image.LANCZOS)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -219,6 +271,8 @@ def _render_frame(
     n_cars: int,
     frame_idx: int,
     pit_markers: Dict[int, List[Tuple[float, float]]] = None,
+    flag_img: Optional[Image.Image] = None,
+    track_name: str = "",
 ) -> Image.Image:
     font_hd, font_md, font_sm, font_xs = fonts
 
@@ -356,6 +410,15 @@ def _render_frame(
     # ── header ────────────────────────────────────────────────────────────────
     if sc_blink:
         draw.rectangle([0, 0, W, HEADER_H - 2], fill=(55, 44, 0))
+
+    # Flag + track name in top-left of header
+    if flag_img is not None:
+        fy = (HEADER_H - flag_img.height) // 2
+        img.paste(flag_img, (8, fy), flag_img)
+        if track_name:
+            draw.text((8 + flag_img.width + 6, HEADER_H // 2),
+                      track_name, fill=TEXT, font=font_sm, anchor="lm")
+
     mins, secs = divmod(int(race_time), 60)
     draw.text((W // 2, HEADER_H // 2),
               f"LAP {lap} / {total_laps}    {mins}:{secs:02d}",
@@ -395,6 +458,8 @@ def build_mp4(
     out_path: str,
     total_laps: int = 0,
     sc_timeline: Optional[List[Tuple[float, int]]] = None,
+    track_id: int = -1,
+    track_name: str = "",
 ) -> None:
     """
     snapshots: list of dicts with at minimum:
@@ -420,6 +485,7 @@ def build_mp4(
         times.append(sorted(by_time.keys())[-1])
 
     sc_tl: List[Tuple[float, int]] = sorted(sc_timeline) if sc_timeline else []
+    flag_img = _load_flag(track_id)
 
     fonts = (_load_font(24), _load_font(14), _load_font(13), _load_font(11))
 
@@ -537,6 +603,8 @@ def build_mp4(
                 n_cars=n_cars,
                 frame_idx=frame_count,
                 pit_markers=pit_markers,
+                flag_img=flag_img,
+                track_name=track_name,
             )
             proc.stdin.write(img.tobytes())
             frame_count += 1
@@ -579,7 +647,7 @@ def build_mp4(
                     lap_boundary_dists, finish_distance, finish_distance,
                     max_laps, max_laps, times[-1],
                     fonts, sc_status=0, n_cars=n_cars, frame_idx=frame_count,
-                    pit_markers=pit_markers,
+                    pit_markers=pit_markers, flag_img=flag_img, track_name=track_name,
                 )
                 proc.stdin.write(img.tobytes())
                 frame_count += 1
@@ -596,14 +664,3 @@ def build_mp4(
 
     size_kb = os.path.getsize(out_path) // 1024
     print(f"[visualizer] mp4 saved: {out_path} ({frame_count} frames, {size_kb} KB)")
-
-
-def build_gif(
-    snapshots: List[Any],
-    out_path: str,
-    total_laps: int = 0,
-    sc_timeline: Optional[List[Tuple[float, int]]] = None,
-) -> None:
-    mp4 = out_path.replace(".gif", ".mp4") if out_path.endswith(".gif") else out_path + ".mp4"
-    print(f"[visualizer] → {mp4}")
-    build_mp4(snapshots, mp4, total_laps=total_laps, sc_timeline=sc_timeline)

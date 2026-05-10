@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS raw_packets (
 
 CREATE TABLE IF NOT EXISTS sessions (
     session_uid   INTEGER PRIMARY KEY,
+    track_id      INTEGER,
     track_name    TEXT,
     session_type  TEXT,
     total_laps    INTEGER,
@@ -157,8 +158,9 @@ class Recorder:
             track_name = TRACK_NAMES.get(int(pkt.track_id), f"Track {pkt.track_id}")
             session_name = SESSION_TYPES.get(int(pkt.session_type), f"Type {pkt.session_type}")
             self.conn.execute(
-                "INSERT OR IGNORE INTO sessions VALUES (?,?,?,?,?)",
-                (uid, track_name, session_name, int(pkt.total_laps), int(time.time())),
+                "INSERT OR IGNORE INTO sessions VALUES (?,?,?,?,?,?)",
+                (uid, int(pkt.track_id), track_name, session_name,
+                 int(pkt.total_laps), int(time.time())),
             )
 
         sc_status = int(pkt.safety_car_status)
