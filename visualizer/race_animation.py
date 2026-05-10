@@ -81,6 +81,7 @@ ALPHA_Y    = 0.18
 ALPHA_DIST = 0.15
 
 OUTRO_S = 3
+GRID_BLEND_DURATION = 60.0   # seconds over which start-grid layout blends into race scale
 
 # Colours
 BG        = (10, 10, 22)
@@ -190,6 +191,13 @@ def _draw_checkered_flag(draw: ImageDraw.Draw,
             draw.rectangle([x0, y0, x0 + sq - 1, y0 + sq - 1], fill=fill)
 
 
+def _grid_to_x(grid_pos: int, n_cars: int) -> float:
+    """Linear x position for a car on the starting grid.
+    P1 → 80% of bar width; last car → left edge (0%)."""
+    frac = (n_cars - grid_pos) / max(n_cars - 1, 1) * 0.80
+    return LEFT_W + frac * LINE_AREA
+
+
 def _dist_to_x(dist: float, x_max: float) -> float:
     if x_max <= 0:
         return float(LEFT_W)
@@ -286,6 +294,8 @@ def _render_frame(
     flag_img: Optional[Image.Image] = None,
     track_name: str = "",
     fl_holder: Optional[int] = None,
+    blend_factor: float = 1.0,
+    grid_positions: Optional[Dict[int, int]] = None,
 ) -> Image.Image:
     font_hd, font_md, font_sm, font_xs = fonts
 
@@ -361,7 +371,13 @@ def _render_frame(
         name    = meta.get("name", "???")
         team_id = meta.get("team_id", -1)
 
-        cx       = _dist_to_x(car["total_distance"], x_max)
+        dist_x = _dist_to_x(car["total_distance"], x_max)
+        if blend_factor < 1.0 and grid_positions:
+            gpos = grid_positions.get(idx, car.get("car_position", n_cars))
+            gx   = _grid_to_x(gpos, n_cars)
+            cx   = gx + blend_factor * (dist_x - gx)
+        else:
+            cx = dist_x
         icon_tip = cx + icon_sz
 
         # ── pit status indicator (left of car) ────────────────────────────
@@ -485,6 +501,7 @@ def build_mp4(
     track_name: str = "",
     final_positions: Optional[Dict[int, int]] = None,
     ftlp_timeline: Optional[List[Tuple[float, int]]] = None,
+    grid_positions: Optional[Dict[int, int]] = None,
 ) -> None:
     """
     snapshots: list of dicts with at minimum:
@@ -632,6 +649,8 @@ def build_mp4(
                 flag_img=flag_img,
                 track_name=track_name,
                 fl_holder=_lookup_fl(ftlp_tl, t),
+                blend_factor=min(1.0, t / GRID_BLEND_DURATION) if grid_positions else 1.0,
+                grid_positions=grid_positions,
             )
             proc.stdin.write(img.tobytes())
             frame_count += 1
@@ -701,6 +720,7 @@ def build_mp4(
                     fonts, sc_status=0, n_cars=n_cars, frame_idx=frame_count,
                     pit_markers=pit_markers, flag_img=flag_img, track_name=track_name,
                     fl_holder=_lookup_fl(ftlp_tl, times[-1]),
+                    grid_positions=grid_positions,
                 )
                 proc.stdin.write(img.tobytes())
                 frame_count += 1
