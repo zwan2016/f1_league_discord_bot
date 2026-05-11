@@ -81,7 +81,6 @@ pyinstaller build/recorder.spec
 
 ```bash
 echo "your-discord-token" > config/discord_token
-echo "your-channel-id"   > config/channels   # one ID per line; empty = all channels
 python3 -m bot.main
 ```
 
@@ -121,10 +120,11 @@ pip install -r requirements.txt
 
 ```bash
 echo "your-discord-token" > config/discord_token
-echo "your-channel-id"   > config/channels
-# Optionally restrict by role:
+# Optionally restrict upload permission by Discord role:
 echo "League Member" > config/roles
 ```
+
+> Channel restrictions are managed in Discord itself: **Server Settings → Integrations → your bot → Manage**. No code config needed.
 
 **6. Test run**
 

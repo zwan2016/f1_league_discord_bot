@@ -139,14 +139,6 @@ class RaceCog(commands.Cog, name="Race"):
     @app_commands.command(name="upload-race", description="Upload a race recording (.zip) to generate the animation")
     @app_commands.describe(file="The race recording zip exported by the recorder")
     async def upload_race(self, interaction: discord.Interaction, file: discord.Attachment):
-        # Channel restriction
-        race_channel_ids = getattr(self.bot, "race_channel_ids", set())
-        if race_channel_ids and interaction.channel_id not in race_channel_ids:
-            await interaction.response.send_message(
-                "❌ This command is not allowed in this channel.", ephemeral=True
-            )
-            return
-
         # Role restriction
         allowed_roles = getattr(self.bot, "allowed_roles", set())
         if not _check_role(interaction.user, allowed_roles):

@@ -3,7 +3,7 @@ import asyncio
 import discord
 from discord.ext import commands
 
-from config.settings import load_token, load_race_channel_ids, load_allowed_roles
+from config.settings import load_token, load_allowed_roles
 
 COGS = [
     "bot.cogs.race",
@@ -20,7 +20,6 @@ class F1Bot(commands.Bot):
             intents=intents,
             help_command=commands.DefaultHelpCommand(),
         )
-        self.race_channel_ids: set[int] = load_race_channel_ids()
         self.allowed_roles: set[str] = load_allowed_roles()
 
     async def setup_hook(self) -> None:
@@ -32,10 +31,10 @@ class F1Bot(commands.Bot):
 
     async def on_ready(self) -> None:
         print(f"[bot] Logged in as {self.user} (id={self.user.id})")
-        if self.race_channel_ids:
-            print(f"[bot] Watching channels: {self.race_channel_ids}")
+        if self.allowed_roles:
+            print(f"[bot] Allowed roles: {self.allowed_roles}")
         else:
-            print("[bot] No RACE_CHANNEL_IDS set — listening in all channels")
+            print("[bot] No role restriction configured")
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
