@@ -161,6 +161,15 @@ class RaceCog(commands.Cog, name="Race"):
     async def _process_recording(
         self, interaction: discord.Interaction, attachment: discord.Attachment
     ) -> None:
+        max_queue = getattr(self.bot, "max_queue_size", 5)
+        if self._queue_size >= max_queue:
+            await interaction.followup.send(
+                f"⚠️ Too many uploads in progress ({self._queue_size}/{max_queue}). "
+                "Please try again in a few minutes.",
+                ephemeral=True,
+            )
+            return
+
         self._queue_size += 1
         status_msg = None
 

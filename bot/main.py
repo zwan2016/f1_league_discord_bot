@@ -3,7 +3,7 @@ import asyncio
 import discord
 from discord.ext import commands
 
-from config.settings import load_token, load_allowed_roles
+from config.settings import load_token, load_allowed_roles, load_max_queue_size
 
 COGS = [
     "bot.cogs.race",
@@ -21,6 +21,7 @@ class F1Bot(commands.Bot):
             help_command=commands.DefaultHelpCommand(),
         )
         self.allowed_roles: set[str] = load_allowed_roles()
+        self.max_queue_size: int = load_max_queue_size()
 
     async def setup_hook(self) -> None:
         for cog in COGS:
