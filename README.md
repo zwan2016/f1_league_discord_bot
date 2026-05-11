@@ -77,11 +77,105 @@ pyinstaller build/recorder.spec
 # Output: dist/F1_Recorder.exe
 ```
 
-### Run the Bot
+### Run the Bot locally
 
 ```bash
-cp .env.example .env   # Fill in Discord Token and channel ID
-python -m bot.main
+echo "your-discord-token" > config/discord_token
+echo "your-channel-id"   > config/channels   # one ID per line; empty = all channels
+python3 -m bot.main
+```
+
+### Deploy the Bot to a Server (Oracle Cloud Free Tier recommended)
+
+**1. Create a VM**
+
+In the OCI Console, go to **Compute → Instances → Create Instance**:
+- Shape: `VM.Standard.A1.Flex` (ARM, Always Free) — 2 OCPUs, 12 GB RAM
+- OS: Ubuntu 22.04
+- Make sure to assign a public IP and download the SSH private key
+
+**2. SSH into the VM**
+
+```bash
+chmod 400 ~/Downloads/your-key.key
+ssh -i ~/Downloads/your-key.key ubuntu@<public-ip>
+```
+
+**3. Install dependencies**
+
+```bash
+sudo apt update && sudo apt install -y python3-pip python3-venv ffmpeg git
+```
+
+**4. Clone and set up**
+
+```bash
+git clone https://github.com/zwan2016/f1_leagure_discord_bot.git
+cd f1_leagure_discord_bot
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+**5. Configure**
+
+```bash
+echo "your-discord-token" > config/discord_token
+echo "your-channel-id"   > config/channels
+# Optionally restrict by role:
+echo "League Member" > config/roles
+```
+
+**6. Test run**
+
+```bash
+python3 -m bot.main
+# Should print: [bot] Logged in as ...
+# Ctrl+C to stop
+```
+
+**7. Set up systemd for auto-start and crash recovery**
+
+```bash
+sudo nano /etc/systemd/system/f1bot.service
+```
+
+Paste:
+
+```ini
+[Unit]
+Description=F1 League Discord Bot
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/f1_leagure_discord_bot
+ExecStart=/home/ubuntu/f1_leagure_discord_bot/.venv/bin/python3 -m bot.main
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable f1bot
+sudo systemctl start f1bot
+sudo systemctl status f1bot
+```
+
+**Useful commands**
+
+```bash
+journalctl -u f1bot -f          # live logs
+sudo systemctl restart f1bot    # restart after git pull
+```
+
+**Updating the bot**
+
+```bash
+cd ~/f1_leagure_discord_bot && git pull && sudo systemctl restart f1bot
 ```
 
 ---
