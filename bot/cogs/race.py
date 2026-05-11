@@ -158,79 +158,84 @@ class RaceCog(commands.Cog, name="Race"):
                 mention_author=False,
             )
 
-        async with self.processing_lock:
+        try:
+            async with self.processing_lock:
+                if queue_msg:
+                    await queue_msg.delete()
+                await self._do_process(message, attachment)
+        finally:
             self._queue_size -= 1
-            if queue_msg:
-                await queue_msg.delete()
-            # File size check before downloading
-            if attachment.size > MAX_UPLOAD_BYTES:
-                await message.reply(
-                    f"❌ File too large ({attachment.size // 1024 // 1024} MB). "
-                    f"Max allowed: {MAX_UPLOAD_BYTES // 1024 // 1024} MB.",
-                    mention_author=False,
-                )
-                return
 
-            status_msg = await message.reply(
-                "📡 Recording received — extracting data...", mention_author=False
+    async def _do_process(
+        self, message: discord.Message, attachment: discord.Attachment
+    ) -> None:
+        if attachment.size > MAX_UPLOAD_BYTES:
+            await message.reply(
+                f"❌ File too large ({attachment.size // 1024 // 1024} MB). "
+                f"Max allowed: {MAX_UPLOAD_BYTES // 1024 // 1024} MB.",
+                mention_author=False,
             )
+            return
+
+        status_msg = await message.reply(
+            "📡 Recording received — extracting data...", mention_author=False
+        )
+        try:
+            data = await attachment.read()
+        except discord.HTTPException as e:
+            await status_msg.edit(content=f"❌ Failed to download file: {e}")
+            return
+
+        with tempfile.TemporaryDirectory() as tmpdir:
             try:
-                data = await attachment.read()
-            except discord.HTTPException as e:
-                await status_msg.edit(content=f"❌ Failed to download file: {e}")
+                if attachment.filename.endswith(".zip"):
+                    db_path = _extract_db(data, tmpdir)
+                else:
+                    db_path = os.path.join(tmpdir, attachment.filename)
+                    Path(db_path).write_bytes(data)
+                    with open(db_path, "rb") as f:
+                        magic = f.read(len(SQLITE_MAGIC))
+                    if magic != SQLITE_MAGIC:
+                        await status_msg.edit(content="❌ File is not a valid SQLite database.")
+                        return
+            except ValueError as e:
+                await status_msg.edit(content=f"❌ {e}")
+                return
+            except Exception as e:
+                await status_msg.edit(content=f"❌ Could not read recording: {e}")
                 return
 
-            with tempfile.TemporaryDirectory() as tmpdir:
-                try:
-                    if attachment.filename.endswith(".zip"):
-                        db_path = _extract_db(data, tmpdir)
-                    else:
-                        db_path = os.path.join(tmpdir, attachment.filename)
-                        Path(db_path).write_bytes(data)
-                        # Validate SQLite magic bytes for direct .db uploads too
-                        with open(db_path, "rb") as f:
-                            magic = f.read(len(SQLITE_MAGIC))
-                        if magic != SQLITE_MAGIC:
-                            await status_msg.edit(content="❌ File is not a valid SQLite database.")
-                            return
-                except ValueError as e:
-                    await status_msg.edit(content=f"❌ {e}")
+            await status_msg.edit(content="🔍 Parsing race data...")
+            try:
+                session = await get_session_info(db_path)
+                if not session:
+                    await status_msg.edit(content="❌ No session data found in recording.")
                     return
-                except Exception as e:
-                    await status_msg.edit(content=f"❌ Could not read recording: {e}")
-                    return
+                session_uid = session["session_uid"]
+                results = await get_final_results(db_path, session_uid)
+                participants = await get_participants(db_path, session_uid)
+            except Exception as e:
+                await status_msg.edit(content=f"❌ DB read error: {e}")
+                return
 
-                await status_msg.edit(content="🔍 Parsing race data...")
-                try:
-                    session = await get_session_info(db_path)
-                    if not session:
-                        await status_msg.edit(content="❌ No session data found in recording.")
-                        return
-                    session_uid = session["session_uid"]
-                    results = await get_final_results(db_path, session_uid)
-                    participants = await get_participants(db_path, session_uid)
-                except Exception as e:
-                    await status_msg.edit(content=f"❌ DB read error: {e}")
-                    return
+            embed = _build_results_embed(dict(session), results, participants)
 
-                embed = _build_results_embed(dict(session), results, participants)
+            await status_msg.edit(content="🎨 Generating race animation...")
+            try:
+                mp4_path = await asyncio.get_event_loop().run_in_executor(
+                    None, self._generate_animation, db_path, session_uid, tmpdir
+                )
+            except Exception as e:
+                print(f"[race cog] Animation generation failed: {e}")
+                mp4_path = None
 
-                await status_msg.edit(content="🎨 Generating race animation...")
-                try:
-                    mp4_path = await asyncio.get_event_loop().run_in_executor(
-                        None, self._generate_animation, db_path, session_uid, tmpdir
-                    )
-                except Exception as e:
-                    print(f"[race cog] Animation generation failed: {e}")
-                    mp4_path = None
-
-                if mp4_path and Path(mp4_path).exists():
-                    mp4_file = discord.File(mp4_path, filename="race_animation.mp4")
-                    await status_msg.delete()
-                    await message.channel.send(embed=embed, file=mp4_file)
-                else:
-                    await status_msg.delete()
-                    await message.channel.send(embed=embed)
+            if mp4_path and Path(mp4_path).exists():
+                mp4_file = discord.File(mp4_path, filename="race_animation.mp4")
+                await status_msg.delete()
+                await message.channel.send(embed=embed, file=mp4_file)
+            else:
+                await status_msg.delete()
+                await message.channel.send(embed=embed)
 
     def _generate_animation(self, db_path: str, session_uid: int, out_dir: str) -> str:
         """Blocking call — runs in executor. Returns path to generated mp4."""
