@@ -108,6 +108,34 @@ class RaceCog(commands.Cog, name="Race"):
         self.processing_lock = asyncio.Lock()
         self._queue_size = 0
 
+    @app_commands.command(name="help", description="How to record and upload a race")
+    async def help_cmd(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="🏎️ F1 League Bot — Quick Start",
+            color=discord.Color.red(),
+        )
+        embed.add_field(
+            name="1️⃣  Download the recorder",
+            value="Grab the latest `F1_Recorder.exe` from the [Releases page](https://github.com/zwan2016/f1_league_discord_bot/releases) and run it during the race.",
+            inline=False,
+        )
+        embed.add_field(
+            name="2️⃣  After the race",
+            value="Press `Ctrl+C` in the recorder window — it will save a `race.zip` file automatically.",
+            inline=False,
+        )
+        embed.add_field(
+            name="3️⃣  Upload",
+            value="Use `/upload-race` in this channel and attach the `race.zip` file.",
+            inline=False,
+        )
+        embed.add_field(
+            name="📖  Full setup guide",
+            value="[github.com/zwan2016/f1_league_discord_bot](https://github.com/zwan2016/f1_league_discord_bot)",
+            inline=False,
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @app_commands.command(name="upload-race", description="Upload a race recording (.zip) to generate the animation")
     @app_commands.describe(file="The race recording zip exported by the recorder")
     async def upload_race(self, interaction: discord.Interaction, file: discord.Attachment):
