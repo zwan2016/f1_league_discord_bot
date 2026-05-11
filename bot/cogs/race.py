@@ -154,7 +154,7 @@ class RaceCog(commands.Cog, name="Race"):
         queue_msg = None
         if self._queue_size > 1:
             queue_msg = await message.reply(
-                f"⏳ 排队中，前面还有 {self._queue_size - 1} 个任务...",
+                f"⏳ Queued — {self._queue_size - 1} task(s) ahead of you...",
                 mention_author=False,
             )
 
@@ -220,7 +220,7 @@ class RaceCog(commands.Cog, name="Race"):
 
             embed = _build_results_embed(dict(session), results, participants)
 
-            await status_msg.edit(content="🎨 Generating race animation...")
+            await status_msg.edit(content="🎨 Generating race animation — this may take up to 3 minutes...")
             try:
                 mp4_path = await asyncio.get_event_loop().run_in_executor(
                     None, self._generate_animation, db_path, session_uid, tmpdir
