@@ -122,6 +122,7 @@ class RaceCog(commands.Cog, name="Race"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.processing_lock = asyncio.Lock()
+        self._queue_size = 0
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -143,13 +144,24 @@ class RaceCog(commands.Cog, name="Race"):
             ext = Path(attachment.filename).suffix.lower()
             if ext not in ALLOWED_EXTENSIONS:
                 continue
-            await self._process_recording(message, attachment)
+            asyncio.create_task(self._process_recording(message, attachment))
             break  # handle one file per message
 
     async def _process_recording(
         self, message: discord.Message, attachment: discord.Attachment
     ) -> None:
+        self._queue_size += 1
+        queue_msg = None
+        if self._queue_size > 1:
+            queue_msg = await message.reply(
+                f"⏳ 排队中，前面还有 {self._queue_size - 1} 个任务...",
+                mention_author=False,
+            )
+
         async with self.processing_lock:
+            self._queue_size -= 1
+            if queue_msg:
+                await queue_msg.delete()
             # File size check before downloading
             if attachment.size > MAX_UPLOAD_BYTES:
                 await message.reply(
