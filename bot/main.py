@@ -27,6 +27,8 @@ class F1Bot(commands.Bot):
         for cog in COGS:
             await self.load_extension(cog)
             print(f"[bot] Loaded cog: {cog}")
+        await self.tree.sync()
+        print("[bot] Slash commands synced")
 
     async def on_ready(self) -> None:
         print(f"[bot] Logged in as {self.user} (id={self.user.id})")
