@@ -75,3 +75,26 @@ async def get_sc_timeline(db_path: str, session_uid: int) -> List[tuple]:
         (session_uid,),
     )
     return [(r["session_time"], r["status"]) for r in rows]
+
+
+async def get_rdfl_timeline(db_path: str, session_uid: int) -> List[tuple]:
+    """Red flag periods as [(rdfl_start, rdfl_end)] pairs.
+    rdfl_end is the session_time of the next SCAR event after the red flag,
+    or None if the race ended under red flag conditions."""
+    rdfl_rows = await fetchall(
+        db_path,
+        "SELECT session_time FROM events WHERE session_uid=? AND event_code='RDFL' ORDER BY session_time",
+        (session_uid,),
+    )
+    scar_rows = await fetchall(
+        db_path,
+        "SELECT session_time FROM events WHERE session_uid=? AND event_code='SCAR' ORDER BY session_time",
+        (session_uid,),
+    )
+    rdfl_times = [r["session_time"] for r in rdfl_rows]
+    scar_times = [r["session_time"] for r in scar_rows]
+    result = []
+    for rdfl_t in rdfl_times:
+        next_scar = next((s for s in scar_times if s > rdfl_t), None)
+        result.append((rdfl_t, next_scar))
+    return result

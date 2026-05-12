@@ -15,7 +15,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.utils.db import get_session_info, get_final_results, get_participants
+from bot.utils.db import get_session_info, get_final_results, get_participants, get_rdfl_timeline
 
 
 ALLOWED_EXTENSIONS = {".zip", ".db"}
@@ -271,12 +271,13 @@ class RaceCog(commands.Cog, name="Race"):
 
         loop = asyncio.new_event_loop()
         try:
-            from bot.utils.db import get_session_info, get_lap_snapshots, get_sc_timeline, get_final_results, get_ftlp_timeline
+            from bot.utils.db import get_session_info, get_lap_snapshots, get_sc_timeline, get_final_results, get_ftlp_timeline, get_rdfl_timeline
             session_info  = loop.run_until_complete(get_session_info(db_path, session_uid))
             snapshots     = loop.run_until_complete(get_lap_snapshots(db_path, session_uid))
             sc_timeline   = loop.run_until_complete(get_sc_timeline(db_path, session_uid))
             final_results = loop.run_until_complete(get_final_results(db_path, session_uid))
             ftlp_timeline = loop.run_until_complete(get_ftlp_timeline(db_path, session_uid))
+            rdfl_timeline = loop.run_until_complete(get_rdfl_timeline(db_path, session_uid))
         finally:
             loop.close()
 
@@ -294,7 +295,8 @@ class RaceCog(commands.Cog, name="Race"):
                   track_id=track_id, track_name=track_name,
                   final_positions=final_positions,
                   ftlp_timeline=ftlp_timeline,
-                  grid_positions=grid_positions)
+                  grid_positions=grid_positions,
+                  rdfl_timeline=rdfl_timeline)
         return out_path
 
 

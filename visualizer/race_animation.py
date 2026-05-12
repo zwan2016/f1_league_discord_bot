@@ -26,9 +26,9 @@ Lap markers + finish flag
 
 Outro (end sequence)
 ─────────────────────
-  After live data ends, all cars move at the same constant speed toward
-  finish_distance, so cars that were further ahead arrive first.  History
-  trails extend frame-by-frame so there is no visual break.
+  After live data ends, all active (non-DNF) cars move at the same constant
+  speed toward finish_distance.  DNF ghost cars remain frozen at their last
+  position throughout the outro.
 
 Output: mp4 via ffmpeg subprocess (ffmpeg must be on PATH).
 """
@@ -96,6 +96,7 @@ WARN_COL  = (255, 200, 0)
 PEN_COL   = (220, 60, 60)
 PIT_COL   = (0, 180, 255)
 FL_COL    = (175, 0, 255)
+RF_COL    = (200, 0, 0)    # Red flag banner
 HIST_DIM  = 0.60
 
 SC_LABELS = {1: "SAFETY CAR", 2: "VIRTUAL SAFETY CAR", 3: "SC ENDING"}
@@ -255,6 +256,14 @@ def _lookup_fl(ftlp_timeline: List[Tuple[float, int]], t: float) -> Optional[int
     return holder
 
 
+def _is_red_flag(rdfl_timeline: List[Tuple[float, Optional[float]]], t: float) -> bool:
+    """Return True if time t falls within a red flag period."""
+    for start, end in rdfl_timeline:
+        if t >= start and (end is None or t < end):
+            return True
+    return False
+
+
 # ── car icon ─────────────────────────────────────────────────────────────────
 
 def _draw_car_icon(
@@ -316,11 +325,16 @@ def _render_frame(
     fl_holder: Optional[int] = None,
     blend_factor: float = 1.0,
     grid_positions: Optional[Dict[int, int]] = None,
+    red_flag: bool = False,
+    ghost_indices: Optional[set] = None,
 ) -> Image.Image:
     font_hd, font_md, font_sm, font_xs = fonts
+    if ghost_indices is None:
+        ghost_indices = set()
 
-    # Safety car: flash header background on even blink ticks
-    sc_blink = sc_status > 0 and (frame_idx // 12) % 2 == 0
+    # Safety car / red flag: flash header background on even blink ticks
+    rf_blink = red_flag and (frame_idx // 12) % 2 == 0
+    sc_blink = (not red_flag) and sc_status > 0 and (frame_idx // 12) % 2 == 0
 
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
@@ -359,7 +373,10 @@ def _render_frame(
         if len(hist) < 2:
             continue
         colour = car_meta.get(idx, {}).get("colour", DEFAULT_COLOUR)
-        hc = _dim(colour, HIST_DIM)
+        if idx in ghost_indices:
+            hc = _dim(colour, HIST_DIM * 0.5)  # extra dim for DNF cars
+        else:
+            hc = _dim(colour, HIST_DIM)
         step = max(1, len(hist) // 300)
         pts_raw = hist[::step]
         if pts_raw[-1] != hist[-1]:
@@ -386,19 +403,40 @@ def _render_frame(
         if yc is None:
             continue
 
+        is_ghost = idx in ghost_indices
         meta    = car_meta.get(idx, {})
         colour  = meta.get("colour", DEFAULT_COLOUR)
         name    = meta.get("name", "???")
         team_id = meta.get("team_id", -1)
 
         dist_x = _dist_to_x(car["total_distance"], x_max)
-        if blend_factor < 1.0 and grid_positions:
+        if blend_factor < 1.0 and grid_positions and not is_ghost:
             gpos = grid_positions.get(idx, car.get("car_position", n_cars))
             gx   = _grid_to_x(gpos, n_cars)
             cx   = gx + blend_factor * (dist_x - gx)
         else:
             cx = dist_x
         icon_tip = cx + icon_sz
+
+        if is_ghost:
+            # ── DNF ghost car rendering ──────────────────────────────────────
+            dim_colour = _dim(colour, 0.35)
+            _draw_car_icon(draw, icon_tip, yc, dim_colour, size=icon_sz)
+            # DNF box to the right of the car icon
+            dnf_label = "DNF"
+            dw = int(font_xs.getlength(dnf_label)) + 8
+            dx0 = int(icon_tip) + 4
+            draw.rectangle([dx0, int(yc) - 9, dx0 + dw, int(yc) + 9],
+                            fill=(160, 0, 0), outline=(220, 50, 50))
+            draw.text((dx0 + 4, yc), dnf_label,
+                      fill=(255, 255, 255), font=font_xs, anchor="lm")
+            # Left column — dimmed team name, "DNF" instead of position
+            team_str = TEAM_NAMES.get(team_id, "???")
+            draw.text((6, yc), "DNF", fill=_dim(PEN_COL, 0.7), font=font_xs, anchor="lm")
+            draw.text((38, yc), team_str[:12], fill=_dim(TEXT, 0.45), font=font_sm, anchor="lm")
+            continue
+
+        # ── active car rendering ─────────────────────────────────────────────
 
         # ── pit status indicator (left of car) ────────────────────────────
         pit = car.get("pit_status", 0)
@@ -467,7 +505,9 @@ def _render_frame(
         draw.text((38, yc), team_str[:12], fill=TEXT, font=font_sm, anchor="lm")
 
     # ── header ────────────────────────────────────────────────────────────────
-    if sc_blink:
+    if rf_blink:
+        draw.rectangle([0, 0, W, HEADER_H - 2], fill=(80, 0, 0))
+    elif sc_blink:
         draw.rectangle([0, 0, W, HEADER_H - 2], fill=(55, 44, 0))
 
     # Flag + track name in top-left of header
@@ -482,7 +522,13 @@ def _render_frame(
     draw.text((W // 2, HEADER_H // 2),
               f"LAP {lap} / {total_laps}    {mins}:{secs:02d}",
               fill=TEXT, font=font_hd, anchor="mm")
-    if sc_status > 0:
+
+    if red_flag:
+        # Prominent red flag indicator — blinks
+        rf_text = "RED FLAG"
+        rf_col  = (255, 80, 80) if rf_blink else (200, 40, 40)
+        draw.text((W - 14, HEADER_H // 2), rf_text, fill=rf_col, font=font_md, anchor="rm")
+    elif sc_status > 0:
         label = SC_LABELS.get(sc_status, "SAFETY CAR")
         draw.text((W - 14, HEADER_H // 2),
                   f"SC: {label}", fill=SC_COL, font=font_md, anchor="rm")
@@ -522,15 +568,18 @@ def build_mp4(
     final_positions: Optional[Dict[int, int]] = None,
     ftlp_timeline: Optional[List[Tuple[float, int]]] = None,
     grid_positions: Optional[Dict[int, int]] = None,
+    rdfl_timeline: Optional[List[Tuple[float, Optional[float]]]] = None,
 ) -> None:
     """
     snapshots: list of dicts with at minimum:
         session_time, car_index, car_position, current_lap,
         total_distance, pit_status, name, team_id
     Optional per-car fields (added by recorder v2+):
-        delta_to_leader_ms, warnings, penalties
+        delta_to_leader_ms, warnings, penalties, result_status
     sc_timeline: sorted list of (session_time, safety_car_status) from
         Session packets (packet_id=1).  sc_status: 0=none 1=SC 2=VSC 3=ending
+    rdfl_timeline: list of (rdfl_start, rdfl_end) pairs; rdfl_end is None if
+        the race ended under red flag (no subsequent SCAR event).
     """
     if not snapshots:
         raise ValueError("No snapshots to animate")
@@ -548,6 +597,7 @@ def build_mp4(
 
     sc_tl:   List[Tuple[float, int]] = sorted(sc_timeline)   if sc_timeline   else []
     ftlp_tl: List[Tuple[float, int]] = sorted(ftlp_timeline) if ftlp_timeline else []
+    rdfl_tl: List[Tuple[float, Optional[float]]] = rdfl_timeline if rdfl_timeline else []
     flag_img = _load_flag(track_id, track_name)
 
     fonts = (_load_font(24), _load_font(14), _load_font(13), _load_font(11))
@@ -565,23 +615,40 @@ def build_mp4(
     def _target_y(rank: int) -> float:
         return HEADER_H + (rank + 0.5) * row_h
 
-    # Pre-scan: lap boundaries + finish_distance
+    # ── Pre-scan: lap boundaries + finish_distance ────────────────────────────
+    # finish_distance = distance of the first car to achieve result_status==3
+    # (the actual finish line position), NOT the max total_distance which
+    # includes post-race driving by the winner.
     lap_boundary_dists: Dict[int, float] = {}
     finish_distance: float = 0.0
+    finish_distance_from_status: float = 0.0  # set when first car crosses line
     prev_lap = None
     for t in times:
         bucket = list(by_time[t].values())
         if not bucket:
             continue
         for car in bucket:
-            d = float(car.get("total_distance", 0))
-            if d > finish_distance:
-                finish_distance = d
+            # Candidate finish_distance: first car snapshot with result_status=3
+            if car.get("result_status") == 3:
+                d = float(car.get("total_distance", 0))
+                if finish_distance_from_status == 0.0 or d < finish_distance_from_status:
+                    finish_distance_from_status = d
         leader = max(bucket, key=lambda c: c["total_distance"])
         lap_n = int(leader.get("current_lap", 1))
         if prev_lap is not None and lap_n != prev_lap and lap_n not in lap_boundary_dists:
             lap_boundary_dists[lap_n] = leader["total_distance"]
         prev_lap = lap_n
+
+    # Use result_status-derived finish line if available, otherwise fall back
+    # to the maximum observed distance (covers older recordings without status).
+    if finish_distance_from_status > 0.0:
+        finish_distance = finish_distance_from_status
+    else:
+        for t in times:
+            for car in by_time[t].values():
+                d = float(car.get("total_distance", 0))
+                if d > finish_distance:
+                    finish_distance = d
 
     y_pos:        Dict[int, float] = {}
     smooth_dist:  Dict[int, float] = {}
@@ -591,7 +658,12 @@ def build_mp4(
     prev_pit:     Dict[int, int] = {}
     car_meta:     Dict[int, Dict] = {}
     max_laps = total_laps
-    last_cars: List[Dict] = []
+    last_cars: List[Dict] = []   # active (non-DNF) cars only, for outro
+
+    # DNF tracking
+    ghost_cars:    Dict[int, float] = {}   # idx -> frozen smooth_dist
+    last_seen:     Dict[int, Dict]  = {}   # idx -> last snapshot
+    finished_cars: set              = set()  # indices that achieved result_status=3
 
     proc = _open_ffmpeg(out_path)
     frame_count = 0
@@ -602,8 +674,22 @@ def build_mp4(
             if not cars_raw:
                 continue
 
+            current_indices = {c["car_index"] for c in cars_raw}
+
+            # Detect newly disappeared cars that haven't finished → DNF
+            for idx in set(last_seen.keys()) - current_indices:
+                if idx not in finished_cars and idx not in ghost_cars:
+                    ghost_cars[idx] = smooth_dist.get(idx, 0.0)
+
+            # Update finished set and last_seen for active cars
+            for car in cars_raw:
+                idx = car["car_index"]
+                last_seen[idx] = car
+                if car.get("result_status") == 3:
+                    finished_cars.add(idx)
+
             cars = sorted(cars_raw, key=lambda c: c["total_distance"], reverse=True)
-            last_cars = cars
+            last_cars = cars  # remember for outro (active cars only)
 
             for car in cars:
                 idx = car["car_index"]
@@ -612,6 +698,15 @@ def build_mp4(
                         "colour":  TEAM_COLOURS.get(car.get("team_id", -1), DEFAULT_COLOUR),
                         "name":    car.get("name", "???"),
                         "team_id": car.get("team_id", -1),
+                    }
+            # Ensure ghost car metadata is also stored
+            for idx in ghost_cars:
+                if idx not in car_meta and idx in last_seen:
+                    c = last_seen[idx]
+                    car_meta[idx] = {
+                        "colour":  TEAM_COLOURS.get(c.get("team_id", -1), DEFAULT_COLOUR),
+                        "name":    c.get("name", "???"),
+                        "team_id": c.get("team_id", -1),
                     }
 
             for rank, car in enumerate(cars):
@@ -644,7 +739,6 @@ def build_mp4(
             for car in cars:
                 idx = car["car_index"]
                 history[idx].append((smooth_dist[idx], y_pos[idx]))
-                # Detect pit entry (pit_status 0 → 1) and record trail marker
                 cur_pit = car.get("pit_status", 0)
                 if prev_pit.get(idx, 0) == 0 and cur_pit == 1:
                     pit_markers[idx].append((smooth_dist[idx], y_pos[idx]))
@@ -653,9 +747,23 @@ def build_mp4(
             lap = max((c["current_lap"] for c in cars), default=1)
             max_laps = max(max_laps, lap)
 
+            # Build display list: active cars + ghost (DNF) cars
             cars_display = [dict(c, total_distance=smooth_dist.get(c["car_index"],
                                                                     c["total_distance"]))
                             for c in cars]
+            for idx, frozen_dist in ghost_cars.items():
+                ls = last_seen.get(idx, {})
+                cars_display.append({
+                    "car_index":         idx,
+                    "total_distance":    frozen_dist,
+                    "car_position":      99,
+                    "pit_status":        0,
+                    "warnings":          0,
+                    "penalties":         0,
+                    "delta_to_leader_ms": 0,
+                    "result_status":     "DNF",
+                    "current_lap":       ls.get("current_lap", 0),
+                })
 
             img = _render_frame(
                 cars_display, y_pos, history, car_meta,
@@ -671,14 +779,18 @@ def build_mp4(
                 fl_holder=_lookup_fl(ftlp_tl, t),
                 blend_factor=min(1.0, t / GRID_BLEND_DURATION) if grid_positions else 1.0,
                 grid_positions=grid_positions,
+                red_flag=_is_red_flag(rdfl_tl, t),
+                ghost_indices=set(ghost_cars.keys()),
             )
             proc.stdin.write(img.tobytes())
             frame_count += 1
 
-        # Outro: uniform speed toward finish_distance; Y positions re-sort to
-        # final classification order as each car crosses the line.
+        # ── Outro: uniform speed toward finish_distance ───────────────────────
+        # DNF ghost cars are excluded from movement and speed calculation.
         if x_max_cur is not None and last_cars:
-            outro_smooth = dict(smooth_dist)
+            # Only include active (non-DNF) cars in outro movement
+            outro_smooth = {idx: d for idx, d in smooth_dist.items()
+                            if idx not in ghost_cars}
             outro_ypos   = dict(y_pos)
             outro_history: Dict[int, List[Tuple[float, float]]] = {
                 idx: list(pts) for idx, pts in history.items()
@@ -689,7 +801,7 @@ def build_mp4(
                 default=0.0,
             )
             speed = max_gap / (FPS * OUTRO_S) if max_gap > 0 else 0.0
-            crossed: set = set()   # car indices that have reached finish_distance
+            crossed: set = set()   # active car indices that have reached finish_distance
 
             for _fi in range(FPS * OUTRO_S):
                 for idx in list(outro_smooth):
@@ -697,7 +809,7 @@ def build_mp4(
                     if outro_smooth[idx] >= finish_distance:
                         crossed.add(idx)
 
-                outro_cars = sorted(
+                outro_active = sorted(
                     [dict(c, total_distance=outro_smooth.get(c["car_index"],
                                                               c["total_distance"]))
                      for c in last_cars],
@@ -706,18 +818,18 @@ def build_mp4(
 
                 # Update P# label to final position once a car has crossed
                 if final_positions:
-                    outro_cars = [
+                    outro_active = [
                         dict(c, car_position=final_positions[c["car_index"]])
                         if c["car_index"] in crossed and c["car_index"] in final_positions
                         else c
-                        for c in outro_cars
+                        for c in outro_active
                     ]
 
                 # Y target: final classified position for crossed cars,
                 # distance-based rank for cars still racing
                 dist_rank = {car["car_index"]: rank
-                             for rank, car in enumerate(outro_cars)}
-                for car in outro_cars:
+                             for rank, car in enumerate(outro_active)}
+                for car in outro_active:
                     idx = car["car_index"]
                     if idx in crossed and final_positions and idx in final_positions:
                         target = _target_y(final_positions[idx] - 1)
@@ -725,13 +837,27 @@ def build_mp4(
                         target = _target_y(dist_rank[idx])
                     outro_ypos[idx] += ALPHA_Y * (target - outro_ypos[idx])
 
-                # Only extend history for cars still racing — crossed cars'
-                # trails are frozen at their crossing position so the
-                # Y-adjustment doesn't show up on the trajectory lines.
-                for car in outro_cars:
+                # Extend history only for active cars still moving
+                for car in outro_active:
                     idx = car["car_index"]
                     if idx not in crossed:
                         outro_history[idx].append((outro_smooth[idx], outro_ypos[idx]))
+
+                # Add ghost (DNF) cars to outro display — frozen positions
+                outro_cars = list(outro_active)
+                for idx, frozen_dist in ghost_cars.items():
+                    ls = last_seen.get(idx, {})
+                    outro_cars.append({
+                        "car_index":         idx,
+                        "total_distance":    frozen_dist,
+                        "car_position":      99,
+                        "pit_status":        0,
+                        "warnings":          0,
+                        "penalties":         0,
+                        "delta_to_leader_ms": 0,
+                        "result_status":     "DNF",
+                        "current_lap":       ls.get("current_lap", 0),
+                    })
 
                 img = _render_frame(
                     outro_cars, outro_ypos, outro_history, car_meta,
@@ -741,6 +867,8 @@ def build_mp4(
                     pit_markers=pit_markers, flag_img=flag_img, track_name=track_name,
                     fl_holder=_lookup_fl(ftlp_tl, times[-1]),
                     grid_positions=grid_positions,
+                    red_flag=False,
+                    ghost_indices=set(ghost_cars.keys()),
                 )
                 proc.stdin.write(img.tobytes())
                 frame_count += 1
