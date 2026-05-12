@@ -286,7 +286,6 @@ class RaceCog(commands.Cog, name="Race"):
         total_laps = session_info["total_laps"] if session_info and "total_laps" in session_info.keys() else 0
 
         final_positions = {r["car_index"]: r["position"] for r in final_results} if final_results else None
-        grid_positions  = {r["car_index"]: r["grid_position"] for r in final_results} if final_results else None
 
         from visualizer.race_animation import build_mp4
         out_path = os.path.join(out_dir, "race_animation.mp4")
@@ -295,7 +294,7 @@ class RaceCog(commands.Cog, name="Race"):
                   track_id=track_id, track_name=track_name,
                   final_positions=final_positions,
                   ftlp_timeline=ftlp_timeline,
-                  grid_positions=grid_positions,
+                  grid_positions=None,
                   rdfl_timeline=rdfl_timeline)
         return out_path
 
