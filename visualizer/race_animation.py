@@ -750,14 +750,17 @@ def build_mp4(
                 else:
                     smooth_dist[idx] += ALPHA_DIST * (raw - smooth_dist[idx])
 
-            leader_dist = cars[0]["total_distance"]
+            # Use smooth_dist of the leader for x_max so the scale tracks
+            # the displayed position without jumping between raw frames.
+            leader_idx = cars[0]["car_index"]
+            leader_smooth = smooth_dist.get(leader_idx, cars[0]["total_distance"])
             if x_max_cur is None:
-                x_max_cur = leader_dist
+                x_max_cur = leader_smooth
             else:
-                target_xmax = leader_dist * 1.015
+                target_xmax = leader_smooth * 1.015
                 if target_xmax > x_max_cur:
                     x_max_cur += ALPHA_X * (target_xmax - x_max_cur)
-                x_max_cur = max(x_max_cur, leader_dist)
+                x_max_cur = max(x_max_cur, leader_smooth)
             if finish_distance > 0:
                 x_max_cur = min(x_max_cur, finish_distance)
 
