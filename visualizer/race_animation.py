@@ -761,12 +761,16 @@ def build_mp4(
             if finish_distance > 0:
                 x_max_cur = min(x_max_cur, finish_distance)
 
+            cur_blend = min(1.0, t / GRID_BLEND_DURATION) if grid_positions else 1.0
             for car in cars:
                 idx = car["car_index"]
-                history[idx].append((smooth_dist[idx], y_pos[idx]))
                 cur_pit = car.get("pit_status", 0)
-                if prev_pit.get(idx, 0) == 0 and cur_pit == 1:
-                    pit_markers[idx].append((smooth_dist[idx], y_pos[idx]))
+                # Only record history after the grid-blend completes so the
+                # trail always originates at the car's displayed position.
+                if cur_blend >= 1.0:
+                    history[idx].append((smooth_dist[idx], y_pos[idx]))
+                    if prev_pit.get(idx, 0) == 0 and cur_pit == 1:
+                        pit_markers[idx].append((smooth_dist[idx], y_pos[idx]))
                 prev_pit[idx] = cur_pit
 
             lap = max((c["current_lap"] for c in cars), default=1)
