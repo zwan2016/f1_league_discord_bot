@@ -349,6 +349,16 @@ def _render_frame(
             ry = HEADER_H + i * row_h
             draw.rectangle([0, ry, W, ry + row_h], fill=STRIPE)
 
+    # SC / VSC: semi-transparent yellow tint over the chart area
+    if sc_status > 0:
+        sc_overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(sc_overlay).rectangle(
+            [LEFT_W, HEADER_H, LEFT_W + LINE_AREA, H - FOOTER_H],
+            fill=(220, 180, 0, 28),   # subtle yellow, ~11 % opacity
+        )
+        img = Image.alpha_composite(img.convert("RGBA"), sc_overlay).convert("RGB")
+        draw = ImageDraw.Draw(img)
+
     # Lap boundary markers
     for lap_n, lap_dist in lap_boundary_dists.items():
         if lap_n < 1 or lap_dist <= 0:
