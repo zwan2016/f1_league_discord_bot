@@ -422,7 +422,7 @@ def _render_frame(
             # ── DNF ghost car rendering ──────────────────────────────────────
             dim_colour = _dim(colour, 0.35)
             _draw_car_icon(draw, icon_tip, yc, dim_colour, size=icon_sz)
-            # DNF box to the right of the car icon
+            # DNF box immediately right of icon
             dnf_label = "DNF"
             dw = int(font_xs.getlength(dnf_label)) + 8
             dx0 = int(icon_tip) + 4
@@ -430,7 +430,12 @@ def _render_frame(
                             fill=(160, 0, 0), outline=(220, 50, 50))
             draw.text((dx0 + 4, yc), dnf_label,
                       fill=(255, 255, 255), font=font_xs, anchor="lm")
-            # Left column — dimmed team name, "DNF" instead of position
+            # Driver name dimmed, right of the DNF box
+            name_x = dx0 + dw + 5
+            if name_x < W - 20:
+                draw.text((name_x, yc), name[:14],
+                          fill=_dim(TEXT, 0.50), font=font_md, anchor="lm")
+            # Left column — "DNF" label + dimmed team name
             team_str = TEAM_NAMES.get(team_id, "???")
             draw.text((6, yc), "DNF", fill=_dim(PEN_COL, 0.7), font=font_xs, anchor="lm")
             draw.text((38, yc), team_str[:12], fill=_dim(TEXT, 0.45), font=font_sm, anchor="lm")
@@ -717,6 +722,16 @@ def build_mp4(
                 else:
                     y_pos[idx] += ALPHA_Y * (target - y_pos[idx])
 
+            # Animate ghost (DNF) cars toward the bottom row(s), in DNF order
+            for i, idx in enumerate(sorted(ghost_cars.keys(),
+                                           key=lambda x: ghost_cars[x])):
+                # First DNF → last row, second DNF → second-to-last, etc.
+                ghost_target = _target_y(n_cars - 1 - i)
+                if idx not in y_pos:
+                    y_pos[idx] = ghost_target
+                else:
+                    y_pos[idx] += ALPHA_Y * (ghost_target - y_pos[idx])
+
             for car in cars:
                 idx = car["car_index"]
                 raw = car["total_distance"]
@@ -788,9 +803,13 @@ def build_mp4(
         # ── Outro: uniform speed toward finish_distance ───────────────────────
         # DNF ghost cars are excluded from movement and speed calculation.
         if x_max_cur is not None and last_cars:
-            # Only include active (non-DNF) cars in outro movement
-            outro_smooth = {idx: d for idx, d in smooth_dist.items()
-                            if idx not in ghost_cars}
+            # Only include active (non-DNF) cars in outro movement.
+            # Seed from the actual (non-smoothed) total_distance so that
+            # smooth_dist lag doesn't cause trails to fall short.
+            outro_smooth = {
+                c["car_index"]: min(c["total_distance"], finish_distance)
+                for c in last_cars
+            }
             outro_ypos   = dict(y_pos)
             outro_history: Dict[int, List[Tuple[float, float]]] = {
                 idx: list(pts) for idx, pts in history.items()
@@ -805,9 +824,13 @@ def build_mp4(
 
             for _fi in range(FPS * OUTRO_S):
                 for idx in list(outro_smooth):
+                    prev_d = outro_smooth[idx]
                     outro_smooth[idx] = min(outro_smooth[idx] + speed, finish_distance)
-                    if outro_smooth[idx] >= finish_distance:
+                    # When a car crosses the finish line, pin a final history
+                    # point exactly at finish_distance so all trails reach the end.
+                    if outro_smooth[idx] >= finish_distance and idx not in crossed:
                         crossed.add(idx)
+                        outro_history[idx].append((finish_distance, outro_ypos[idx]))
 
                 outro_active = sorted(
                     [dict(c, total_distance=outro_smooth.get(c["car_index"],
@@ -843,7 +866,13 @@ def build_mp4(
                     if idx not in crossed:
                         outro_history[idx].append((outro_smooth[idx], outro_ypos[idx]))
 
-                # Add ghost (DNF) cars to outro display — frozen positions
+                # Keep ghost (DNF) cars animating to the bottom row in the outro
+                for i, idx in enumerate(sorted(ghost_cars.keys(),
+                                               key=lambda x: ghost_cars[x])):
+                    ghost_target = _target_y(n_cars - 1 - i)
+                    outro_ypos[idx] += ALPHA_Y * (ghost_target - outro_ypos[idx])
+
+                # Add ghost (DNF) cars to outro display — frozen x positions
                 outro_cars = list(outro_active)
                 for idx, frozen_dist in ghost_cars.items():
                     ls = last_seen.get(idx, {})
