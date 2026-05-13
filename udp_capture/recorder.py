@@ -155,6 +155,7 @@ class Recorder:
         if uid != self._session_uid:
             self._session_uid = uid
             self._last_sc_status = None
+            self._last_snapshot_time = -1.0
             track_name = TRACK_NAMES.get(int(pkt.track_id), f"Track {pkt.track_id}")
             session_name = SESSION_TYPES.get(int(pkt.session_type), f"Type {pkt.session_type}")
             self.conn.execute(
