@@ -719,6 +719,7 @@ def build_mp4(
     last_seen:     Dict[int, Dict]  = {}   # idx -> last snapshot
     finished_cars: set              = set()  # indices that achieved result_status=3
 
+
     # SC / VSC persistent band tracking
     sc_bands:          List[Tuple[float, float]] = []  # (start_dist, end_dist)
     sc_band_start:     Optional[float] = None          # leader smooth_dist when SC started
@@ -746,6 +747,7 @@ def build_mp4(
                 last_seen[idx] = car
                 if car.get("result_status") == 3:
                     finished_cars.add(idx)
+
 
             cars = sorted(cars_raw, key=lambda c: c["total_distance"], reverse=True)
             last_cars = cars  # remember for outro (active cars only)
