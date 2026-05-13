@@ -81,7 +81,8 @@ ALPHA_X    = 0.08
 ALPHA_Y    = 0.18
 ALPHA_DIST = 0.15
 
-OUTRO_S = 3
+OUTRO_S = 1.5
+LINEAR_TRANSITION_S = 3   # seconds to animate non-linear → linear scale after outro
 GRID_BLEND_DURATION = 60.0   # seconds over which start-grid layout blends into race scale
 
 # Colours
@@ -279,12 +280,22 @@ def _grid_to_x(grid_pos: int, n_cars: int) -> float:
     return LEFT_W + frac * LINE_AREA
 
 
-def _dist_to_x(dist: float, x_max: float) -> float:
+def _dist_to_x(dist: float, x_max: float, linear_blend: float = 0.0) -> float:
+    """Convert a distance value to an x pixel coordinate.
+
+    linear_blend=0  → non-linear (gap-compressed) scale used during the race.
+    linear_blend=1  → fully linear (equal-distance) scale used in the outro transition.
+    Values in between smoothly interpolate between the two.
+    """
     if x_max <= 0:
         return float(LEFT_W)
     rel = max(0.0, min(1.0, dist / x_max))
     gap = 1.0 - rel
-    return LEFT_W + (1.0 - gap ** X_POWER) * LINE_AREA
+    x_nonlinear = LEFT_W + (1.0 - gap ** X_POWER) * LINE_AREA
+    if linear_blend <= 0.0:
+        return x_nonlinear
+    x_linear = LEFT_W + rel * LINE_AREA
+    return x_nonlinear + linear_blend * (x_linear - x_nonlinear)
 
 
 def _fmt_gap(ms: int) -> str:
@@ -388,6 +399,7 @@ def _render_frame(
     red_flag: bool = False,
     ghost_indices: Optional[set] = None,
     sc_bands: Optional[List[Tuple[float, float]]] = None,
+    linear_blend: float = 0.0,
 ) -> Image.Image:
     font_hd, font_md, font_sm, font_xs, font_flag = fonts
     if ghost_indices is None:
@@ -417,8 +429,8 @@ def _render_frame(
         sc_overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         sc_draw = ImageDraw.Draw(sc_overlay)
         for band_start, band_end in sc_bands:
-            bx0 = int(_dist_to_x(band_start, x_max))
-            bx1 = int(_dist_to_x(band_end, x_max))
+            bx0 = int(_dist_to_x(band_start, x_max, linear_blend))
+            bx1 = int(_dist_to_x(band_end, x_max, linear_blend))
             bx0 = max(LEFT_W, min(bx0, LEFT_W + LINE_AREA))
             bx1 = max(LEFT_W, min(bx1, LEFT_W + LINE_AREA))
             if bx1 > bx0:
@@ -433,7 +445,7 @@ def _render_frame(
     for lap_n, lap_dist in lap_boundary_dists.items():
         if lap_n < 1 or lap_dist <= 0:
             continue
-        lx = int(_dist_to_x(lap_dist, x_max))
+        lx = int(_dist_to_x(lap_dist, x_max, linear_blend))
         if LEFT_W < lx < LEFT_W + LINE_AREA:
             draw.line([(lx, HEADER_H), (lx, H - FOOTER_H)], fill=LAP_LINE, width=1)
             draw.text((lx, H - FOOTER_H + 4), f"L{lap_n}",
@@ -444,7 +456,7 @@ def _render_frame(
 
     # Checkered finish flag — slides in from right like lap markers
     if x_max > 0 and finish_distance > 0 and finish_distance <= x_max:
-        flag_x = int(_dist_to_x(finish_distance, x_max))
+        flag_x = int(_dist_to_x(finish_distance, x_max, linear_blend))
         if LEFT_W <= flag_x <= LEFT_W + LINE_AREA:
             _draw_checkered_flag(draw, flag_x, HEADER_H, H - FOOTER_H)
 
@@ -461,14 +473,14 @@ def _render_frame(
         pts_raw = hist[::step]
         if pts_raw[-1] != hist[-1]:
             pts_raw = pts_raw + [hist[-1]]
-        pts = [(int(_dist_to_x(d, x_max)), int(y)) for d, y in pts_raw]
+        pts = [(int(_dist_to_x(d, x_max, linear_blend)), int(y)) for d, y in pts_raw]
         draw.line(pts, fill=hc, width=2)
 
     # Pit history markers — show tyre change (from → to) on the trail
     if pit_markers:
         for idx, marks in pit_markers.items():
             for m in marks:
-                mx = int(_dist_to_x(m["dist"], x_max))
+                mx = int(_dist_to_x(m["dist"], x_max, linear_blend))
                 my = int(m["y"])
                 if not (LEFT_W <= mx <= LEFT_W + LINE_AREA):
                     continue
@@ -530,7 +542,7 @@ def _render_frame(
         name    = meta.get("name", "???")
         team_id = meta.get("team_id", -1)
 
-        dist_x = _dist_to_x(car["total_distance"], x_max)
+        dist_x = _dist_to_x(car["total_distance"], x_max, linear_blend)
         if blend_factor < 1.0 and grid_positions and not is_ghost:
             gpos = grid_positions.get(idx, car.get("car_position", n_cars))
             gx   = _grid_to_x(gpos, n_cars)
@@ -680,9 +692,14 @@ def _render_frame(
         draw.text((W - 14, HEADER_H // 2), label, fill=(0, 0, 0), font=font_flag, anchor="rm")
 
     # ── footer ────────────────────────────────────────────────────────────────
+    if linear_blend >= 1.0:
+        footer_label = f"← {x_max / 1000:.1f} km (linear scale) →"
+    elif linear_blend > 0.0:
+        footer_label = f"← {x_max / 1000:.1f} km →"
+    else:
+        footer_label = f"← {x_max / 1000:.1f} km (non-linear scale) →"
     draw.text((LEFT_W + LINE_AREA // 2, H - FOOTER_H // 2 + 8),
-              f"← {x_max / 1000:.1f} km (non-linear scale) →",
-              fill=DIM, font=font_xs, anchor="mm")
+              footer_label, fill=DIM, font=font_xs, anchor="mm")
 
     return img
 
@@ -1014,7 +1031,7 @@ def build_mp4(
             speed = max(max_gap, min_gap) / (FPS * OUTRO_S)
             crossed: set = set()   # active car indices that have reached finish_distance
 
-            for _fi in range(FPS * OUTRO_S):
+            for _fi in range(int(FPS * OUTRO_S)):
                 for idx in list(outro_smooth):
                     prev_d = outro_smooth[idx]
                     outro_smooth[idx] = min(outro_smooth[idx] + speed, finish_distance)
@@ -1091,6 +1108,33 @@ def build_mp4(
                     red_flag=False,
                     ghost_indices=set(ghost_cars.keys()),
                     sc_bands=sc_bands,
+                )
+                proc.stdin.write(img.tobytes())
+                frame_count += 1
+
+            # ── Linear transition: non-linear → linear scale ──────────────────
+            # All cars are now at finish_distance (or their DNF distance).
+            # Smoothly stretch the x-axis from gap-compressed to equal-distance
+            # so viewers can appreciate the true lap-count gaps.
+            linear_cars = list(outro_cars)
+            linear_ypos = dict(outro_ypos)
+            total_linear_frames = FPS * LINEAR_TRANSITION_S
+            # Ease in-out blend: use smoothstep for a more cinematic feel
+            for lfi in range(total_linear_frames):
+                t_norm = lfi / max(total_linear_frames - 1, 1)   # 0 → 1
+                blend = t_norm * t_norm * (3 - 2 * t_norm)       # smoothstep
+                img = _render_frame(
+                    linear_cars, linear_ypos, outro_history, car_meta,
+                    lap_boundary_dists, finish_distance, finish_distance,
+                    max_laps, max_laps, times[-1],
+                    fonts, sc_status=0, n_cars=n_cars, frame_idx=frame_count,
+                    pit_markers=pit_markers, flag_img=flag_img, track_name=track_name,
+                    fl_holder=_lookup_fl(ftlp_tl, times[-1]),
+                    grid_positions=grid_positions,
+                    red_flag=False,
+                    ghost_indices=set(ghost_cars.keys()),
+                    sc_bands=sc_bands,
+                    linear_blend=blend,
                 )
                 proc.stdin.write(img.tobytes())
                 frame_count += 1
