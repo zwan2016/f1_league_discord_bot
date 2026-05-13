@@ -898,7 +898,13 @@ def build_mp4(
                 (finish_distance - d for d in outro_smooth.values()),
                 default=0.0,
             )
-            speed = max_gap / (FPS * OUTRO_S) if max_gap > 0 else 0.0
+            # Minimum speed: cover at least 0.5% of finish_distance in OUTRO_S
+            # seconds.  Without this floor, a car that ends the data just a few
+            # metres short of the finish line (e.g. the last classified car whose
+            # final UDP snapshot arrived slightly before the line) would crawl
+            # across in slow-motion while every other car has already crossed.
+            min_gap = finish_distance * 0.005
+            speed = max(max_gap, min_gap) / (FPS * OUTRO_S)
             crossed: set = set()   # active car indices that have reached finish_distance
 
             for _fi in range(FPS * OUTRO_S):
