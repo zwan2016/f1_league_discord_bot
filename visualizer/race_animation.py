@@ -32,6 +32,7 @@ Outro (end sequence)
 
 Output: mp4 via ffmpeg subprocess (ffmpeg must be on PATH).
 """
+import math
 import os
 import subprocess
 from collections import defaultdict
@@ -183,6 +184,35 @@ def _load_flag(track_id: int, track_name: str = "", height: int = 36) -> Optiona
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
+def _draw_tyre(draw: ImageDraw.ImageDraw, cx: float, cy: float,
+               r: int, tyre_col: tuple) -> None:
+    """Draw a stylised F1 tyre: coloured rubber ring → dark rim → 5 spokes → hub cap."""
+    cx, cy = int(cx), int(cy)
+    r_rim   = max(2, int(r * 0.52))   # inner edge of rubber / outer edge of rim
+    r_hub   = max(1, int(r * 0.22))   # centre hub cap
+
+    # 1. Outer tyre (rubber, compound colour)
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=tyre_col)
+
+    # 2. Rim (dark alloy)
+    rim_col = (50, 52, 62)
+    draw.ellipse([cx - r_rim, cy - r_rim, cx + r_rim, cy + r_rim], fill=rim_col)
+
+    # 3. Five spokes — thin lines from hub edge to rim edge, slightly dimmed
+    spoke_col = (90, 92, 105)
+    for i in range(5):
+        angle = math.radians(i * 72 - 90)          # start at top, evenly spaced
+        x_out = cx + int(r_rim * math.cos(angle))
+        y_out = cy + int(r_rim * math.sin(angle))
+        x_in  = cx + int(r_hub * math.cos(angle))
+        y_in  = cy + int(r_hub * math.sin(angle))
+        draw.line([x_in, y_in, x_out, y_out], fill=spoke_col, width=1)
+
+    # 4. Centre hub cap (light alloy)
+    hub_col = (140, 142, 155)
+    draw.ellipse([cx - r_hub, cy - r_hub, cx + r_hub, cy + r_hub], fill=hub_col)
+
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont:
     for path in [
@@ -434,16 +464,57 @@ def _render_frame(
         pts = [(int(_dist_to_x(d, x_max)), int(y)) for d, y in pts_raw]
         draw.line(pts, fill=hc, width=2)
 
-    # Pit history markers — small blue circle with "P" on the trail
+    # Pit history markers — show tyre change (from → to) on the trail
     if pit_markers:
         for idx, marks in pit_markers.items():
-            for dist, y in marks:
-                mx = int(_dist_to_x(dist, x_max))
-                if LEFT_W <= mx <= LEFT_W + LINE_AREA:
+            for m in marks:
+                mx = int(_dist_to_x(m["dist"], x_max))
+                my = int(m["y"])
+                if not (LEFT_W <= mx <= LEFT_W + LINE_AREA):
+                    continue
+                ft = m["from_tyre"]
+                tt = m["to_tyre"]
+                ft_col = TYRE_COLOURS.get(ft)
+                tt_col = TYRE_COLOURS.get(tt)
+
+                if ft_col or tt_col:
+                    # Pill background wide enough for two tyre icons + arrow
+                    tr_sm  = 5     # small tyre radius
+                    pad    = 3
+                    arr_w  = 6     # pixels reserved for the drawn arrow
+                    pill_w = pad + tr_sm * 2 + 2 + arr_w + 2 + tr_sm * 2 + pad
+                    pill_h = tr_sm * 2 + pad * 2
+                    px0 = mx - pill_w // 2
+                    py0 = my - pill_h // 2
+                    draw.rounded_rectangle([px0, py0, px0 + pill_w, py0 + pill_h],
+                                           radius=pill_h // 2, fill=PIT_COL,
+                                           outline=(200, 240, 255))
+                    # from tyre icon
+                    x_cur = px0 + pad + tr_sm
+                    if ft_col:
+                        _draw_tyre(draw, x_cur, my, tr_sm, ft_col)
+                    else:
+                        draw.text((x_cur, my), "?", fill=(180, 180, 180),
+                                  font=font_xs, anchor="mm")
+                    x_cur += tr_sm + 2
+                    # drawn arrow: shaft + arrowhead
+                    ax0, ax1 = x_cur, x_cur + arr_w
+                    ac = (200, 220, 255)
+                    draw.line([(ax0, my), (ax1 - 2, my)], fill=ac, width=1)
+                    draw.polygon([(ax1 - 3, my - 2), (ax1, my), (ax1 - 3, my + 2)], fill=ac)
+                    x_cur += arr_w + 2
+                    # to tyre icon
+                    if tt_col:
+                        _draw_tyre(draw, x_cur + tr_sm, my, tr_sm, tt_col)
+                    else:
+                        draw.text((x_cur + tr_sm, my), "?", fill=(180, 180, 180),
+                                  font=font_xs, anchor="mm")
+                else:
+                    # No tyre data — fallback to plain "P" circle
                     r = 6
-                    draw.ellipse([mx - r, int(y) - r, mx + r, int(y) + r],
+                    draw.ellipse([mx - r, my - r, mx + r, my + r],
                                  fill=PIT_COL, outline=(200, 240, 255))
-                    draw.text((mx, y), "P", fill=(10, 10, 22),
+                    draw.text((mx, my), "P", fill=(10, 10, 22),
                               font=fonts[3], anchor="mm")
 
     # Car icons + labels
@@ -468,14 +539,13 @@ def _render_frame(
             cx = dist_x
         icon_tip = cx + icon_sz
 
-        # Tyre compound dot — drawn for both active and ghost cars
+        # Tyre compound icon — drawn for both active and ghost cars
         tyre_col = TYRE_COLOURS.get(car.get("tyre_compound"))
         if tyre_col:
-            tr = max(4, icon_sz // 5)
-            tx = int(cx) - icon_sz - tr - 3
+            tr = max(6, icon_sz // 3)   # radius: bigger than old dot for detail
+            tx = int(cx) - icon_sz - tr - 4
             if tx > LEFT_W:
-                draw.ellipse([tx - tr, int(yc) - tr, tx + tr, int(yc) + tr],
-                             fill=tyre_col, outline=_dim(tyre_col, 0.6))
+                _draw_tyre(draw, tx, yc, tr, tyre_col)
 
         if is_ghost:
             # ── DNF ghost car rendering ──────────────────────────────────────
@@ -730,8 +800,10 @@ def build_mp4(
     smooth_dist:  Dict[int, float] = {}
     x_max_cur:    Optional[float] = None
     history:      Dict[int, List[Tuple[float, float]]] = defaultdict(list)
-    pit_markers:  Dict[int, List[Tuple[float, float]]] = defaultdict(list)
+    # Each pit marker: {"dist": float, "y": float, "from_tyre": int|None, "to_tyre": int|None}
+    pit_markers:  Dict[int, List[Dict]] = defaultdict(list)
     prev_pit:     Dict[int, int] = {}
+    last_tyre:    Dict[int, Optional[int]] = {}   # most recent known tyre per car
     car_meta:     Dict[int, Dict] = {}
     max_laps = total_laps
     last_cars: List[Dict] = []   # active (non-DNF) cars only, for outro
@@ -844,14 +916,27 @@ def build_mp4(
             cur_blend = min(1.0, t / GRID_BLEND_DURATION) if grid_positions else 1.0
             for car in cars:
                 idx = car["car_index"]
-                cur_pit = car.get("pit_status", 0)
+                cur_pit  = car.get("pit_status", 0)
+                cur_tyre = car.get("tyre_compound")   # may be None for old recordings
                 # Only record history after the grid-blend completes so the
                 # trail always originates at the car's displayed position.
                 if cur_blend >= 1.0:
                     history[idx].append((smooth_dist[idx], y_pos[idx]))
+                    # Pit entry (0 → 1): create a new marker with from_tyre
                     if prev_pit.get(idx, 0) == 0 and cur_pit == 1:
-                        pit_markers[idx].append((smooth_dist[idx], y_pos[idx]))
+                        pit_markers[idx].append({
+                            "dist":      smooth_dist[idx],
+                            "y":         y_pos[idx],
+                            "from_tyre": last_tyre.get(idx),
+                            "to_tyre":   None,
+                        })
+                    # Pit exit (>0 → 0): fill in to_tyre on the most recent marker
+                    elif prev_pit.get(idx, 0) > 0 and cur_pit == 0:
+                        if pit_markers[idx] and pit_markers[idx][-1]["to_tyre"] is None:
+                            pit_markers[idx][-1]["to_tyre"] = cur_tyre
                 prev_pit[idx] = cur_pit
+                if cur_tyre is not None:
+                    last_tyre[idx] = cur_tyre
 
             lap = max((c["current_lap"] for c in cars), default=1)
             max_laps = max(max_laps, lap)
