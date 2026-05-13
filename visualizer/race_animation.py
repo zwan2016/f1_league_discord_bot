@@ -327,10 +327,13 @@ def _render_frame(
     grid_positions: Optional[Dict[int, int]] = None,
     red_flag: bool = False,
     ghost_indices: Optional[set] = None,
+    sc_bands: Optional[List[Tuple[float, float]]] = None,
 ) -> Image.Image:
     font_hd, font_md, font_sm, font_xs = fonts
     if ghost_indices is None:
         ghost_indices = set()
+    if sc_bands is None:
+        sc_bands = []
 
     # Safety car / red flag: flash header background on even blink ticks
     rf_blink = red_flag and (frame_idx // 12) % 2 == 0
@@ -349,13 +352,21 @@ def _render_frame(
             ry = HEADER_H + i * row_h
             draw.rectangle([0, ry, W, ry + row_h], fill=STRIPE)
 
-    # SC / VSC: semi-transparent yellow tint over the chart area
-    if sc_status > 0:
+    # SC / VSC: persistent yellow bands on the distance axis.
+    # Each band spans (start_dist, end_dist) and stays visible forever.
+    if sc_bands and x_max > 0:
         sc_overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        ImageDraw.Draw(sc_overlay).rectangle(
-            [LEFT_W, HEADER_H, LEFT_W + LINE_AREA, H - FOOTER_H],
-            fill=(220, 180, 0, 28),   # subtle yellow, ~11 % opacity
-        )
+        sc_draw = ImageDraw.Draw(sc_overlay)
+        for band_start, band_end in sc_bands:
+            bx0 = int(_dist_to_x(band_start, x_max))
+            bx1 = int(_dist_to_x(band_end, x_max))
+            bx0 = max(LEFT_W, min(bx0, LEFT_W + LINE_AREA))
+            bx1 = max(LEFT_W, min(bx1, LEFT_W + LINE_AREA))
+            if bx1 > bx0:
+                sc_draw.rectangle(
+                    [bx0, HEADER_H, bx1, H - FOOTER_H],
+                    fill=(220, 180, 0, 35),
+                )
         img = Image.alpha_composite(img.convert("RGBA"), sc_overlay).convert("RGB")
         draw = ImageDraw.Draw(img)
 
@@ -442,9 +453,19 @@ def _render_frame(
                       fill=(255, 255, 255), font=font_xs, anchor="lm")
             # Driver name dimmed, right of the DNF box
             name_x = dx0 + dw + 5
+            after_name_x = name_x
             if name_x < W - 20:
                 draw.text((name_x, yc), name[:14],
                           fill=_dim(TEXT, 0.50), font=font_md, anchor="lm")
+                after_name_x = name_x + int(font_md.getlength(name[:14]))
+            # FL badge — shown even on DNF cars
+            if fl_holder is not None and idx == fl_holder:
+                fl_x = after_name_x + 6
+                fl_w = int(font_xs.getlength("FL")) + 6
+                draw.rectangle([fl_x, int(yc) - 7, fl_x + fl_w, int(yc) + 7],
+                                fill=_dim(FL_COL, 0.75))
+                draw.text((fl_x + 3, yc), "FL", fill=(255, 255, 255),
+                          font=font_xs, anchor="lm")
             # Left column — "DNF" label + dimmed team name
             team_str = TEAM_NAMES.get(team_id, "???")
             draw.text((6, yc), "DNF", fill=_dim(PEN_COL, 0.7), font=font_xs, anchor="lm")
@@ -680,6 +701,11 @@ def build_mp4(
     last_seen:     Dict[int, Dict]  = {}   # idx -> last snapshot
     finished_cars: set              = set()  # indices that achieved result_status=3
 
+    # SC / VSC persistent band tracking
+    sc_bands:          List[Tuple[float, float]] = []  # (start_dist, end_dist)
+    sc_band_start:     Optional[float] = None          # leader smooth_dist when SC started
+    prev_sc_status:    int             = 0
+
     proc = _open_ffmpeg(out_path)
     frame_count = 0
 
@@ -764,6 +790,15 @@ def build_mp4(
             if finish_distance > 0:
                 x_max_cur = min(x_max_cur, finish_distance)
 
+            # Track SC / VSC periods as persistent distance bands
+            cur_sc = _lookup_sc(sc_tl, t)
+            if prev_sc_status == 0 and cur_sc > 0:
+                sc_band_start = leader_smooth      # SC just started
+            elif prev_sc_status > 0 and cur_sc == 0 and sc_band_start is not None:
+                sc_bands.append((sc_band_start, leader_smooth))  # SC just ended
+                sc_band_start = None
+            prev_sc_status = cur_sc
+
             cur_blend = min(1.0, t / GRID_BLEND_DURATION) if grid_positions else 1.0
             for car in cars:
                 idx = car["car_index"]
@@ -813,9 +848,15 @@ def build_mp4(
                 grid_positions=grid_positions,
                 red_flag=_is_red_flag(rdfl_tl, t),
                 ghost_indices=set(ghost_cars.keys()),
+                sc_bands=sc_bands + ([(sc_band_start, leader_smooth)] if sc_band_start is not None else []),
             )
             proc.stdin.write(img.tobytes())
             frame_count += 1
+
+        # Close any SC period still open at race end
+        if sc_band_start is not None:
+            sc_bands.append((sc_band_start, leader_smooth))
+            sc_band_start = None
 
         # ── Outro: uniform speed toward finish_distance ───────────────────────
         # DNF ghost cars are excluded from movement and speed calculation.
@@ -915,6 +956,7 @@ def build_mp4(
                     grid_positions=grid_positions,
                     red_flag=False,
                     ghost_indices=set(ghost_cars.keys()),
+                    sc_bands=sc_bands,
                 )
                 proc.stdin.write(img.tobytes())
                 frame_count += 1
