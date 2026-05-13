@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS lap_snapshots (
     result_status   INTEGER,
     delta_to_leader_ms  INTEGER,
     warnings            INTEGER,
-    penalties           INTEGER
+    penalties           INTEGER,
+    tyre_compound   INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS safety_car_timeline (
@@ -143,6 +144,7 @@ class Recorder:
         self._last_snapshot_time: float = -1.0
         self._snapshot_interval: float = 0.5
         self._last_sc_status: Optional[int] = None
+        self._current_tyre: dict = {}   # car_index -> visual_tyre_compound
 
     def store_raw(self, packet_id: int, session_uid: int, data: bytes) -> None:
         self.conn.execute(
@@ -156,6 +158,7 @@ class Recorder:
             self._session_uid = uid
             self._last_sc_status = None
             self._last_snapshot_time = -1.0
+            self._current_tyre = {}
             track_name = TRACK_NAMES.get(int(pkt.track_id), f"Track {pkt.track_id}")
             session_name = SESSION_TYPES.get(int(pkt.session_type), f"Type {pkt.session_type}")
             self.conn.execute(
@@ -189,6 +192,13 @@ class Recorder:
         )
         self.conn.commit()
 
+    def handle_car_status(self, pkt) -> None:
+        """Cache visual tyre compound per car (packet_id=7)."""
+        for i, cs in enumerate(list(pkt.car_status_data)):
+            compound = int(cs.visual_tyre_compound)
+            if compound > 0:
+                self._current_tyre[i] = compound
+
     def handle_lap_data(self, pkt) -> None:
         t = float(pkt.header.session_time)
         if t - self._last_snapshot_time < self._snapshot_interval:
@@ -204,7 +214,8 @@ class Recorder:
              int(ld.delta_to_race_leader_minutes_part) * 60000
              + int(ld.delta_to_race_leader_ms_part),
              int(ld.total_warnings),
-             int(ld.penalties))
+             int(ld.penalties),
+             self._current_tyre.get(i))
             for i, ld in enumerate(list(pkt.lap_data))
             if int(ld.result_status) in (2, 3)
         ]
@@ -213,8 +224,8 @@ class Recorder:
                (session_uid, session_time, car_index, car_position, current_lap,
                 lap_distance, total_distance, current_lap_time_ms, last_lap_time_ms,
                 pit_status, num_pit_stops, result_status,
-                delta_to_leader_ms, warnings, penalties)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                delta_to_leader_ms, warnings, penalties, tyre_compound)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             rows,
         )
         self.conn.commit()

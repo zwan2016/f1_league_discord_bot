@@ -16,7 +16,7 @@ from f1.packets import PacketHeader, resolve
 
 from .recorder import Recorder
 
-HANDLED_PACKET_IDS = {1, 2, 3, 4, 8}
+HANDLED_PACKET_IDS = {1, 2, 3, 4, 7, 8}
 
 
 def parse_args() -> argparse.Namespace:
@@ -102,6 +102,8 @@ def run() -> None:
                 recorder.handle_event(pkt)
             elif packet_id == 4:
                 recorder.handle_participants(pkt)
+            elif packet_id == 7:
+                recorder.handle_car_status(pkt)
             elif packet_id == 8:
                 recorder.handle_final_classification(pkt)
         except Exception as e:

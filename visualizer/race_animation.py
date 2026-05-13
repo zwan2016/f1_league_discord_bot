@@ -101,6 +101,15 @@ HIST_DIM  = 0.60
 
 SC_LABELS = {1: "SAFETY CAR", 2: "VIRTUAL SAFETY CAR", 3: "SC ENDING"}
 
+# F1 25 visual_tyre_compound → display colour
+TYRE_COLOURS: Dict[int, tuple] = {
+    16: (220,  40,  40),   # Soft   — red
+    17: (220, 200,   0),   # Medium — yellow
+    18: (230, 230, 230),   # Hard   — white
+     7: ( 80, 200,  80),   # Inter  — green
+     8: ( 60, 120, 220),   # Wet    — blue
+}
+
 # track_id (from F1 25 UDP) → ISO 3166-1 alpha-2 country code
 TRACK_FLAGS: Dict[int, str] = {
     0:  "au",   # Melbourne
@@ -438,6 +447,15 @@ def _render_frame(
         else:
             cx = dist_x
         icon_tip = cx + icon_sz
+
+        # Tyre compound dot — drawn for both active and ghost cars
+        tyre_col = TYRE_COLOURS.get(car.get("tyre_compound"))
+        if tyre_col:
+            tr = max(4, icon_sz // 5)
+            tx = int(cx) - icon_sz - tr - 3
+            if tx > LEFT_W:
+                draw.ellipse([tx - tr, int(yc) - tr, tx + tr, int(yc) + tr],
+                             fill=tyre_col, outline=_dim(tyre_col, 0.6))
 
         if is_ghost:
             # ── DNF ghost car rendering ──────────────────────────────────────
@@ -830,6 +848,7 @@ def build_mp4(
                     "delta_to_leader_ms": 0,
                     "result_status":     "DNF",
                     "current_lap":       ls.get("current_lap", 0),
+                    "tyre_compound":     ls.get("tyre_compound"),
                 })
 
             img = _render_frame(
