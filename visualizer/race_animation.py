@@ -200,6 +200,27 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
+def _load_bold_font(size: int) -> ImageFont.FreeTypeFont:
+    """Load the heaviest available bold font — used for SC/RF header labels."""
+    for path in [
+        # macOS
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Impact.ttf",
+        # Windows
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/impact.ttf",
+        # Linux
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    ]:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            pass
+    return _load_font(size)
+
+
 def _dim(c: tuple, f: float) -> tuple:
     return tuple(int(x * f) for x in c)
 
@@ -338,15 +359,14 @@ def _render_frame(
     ghost_indices: Optional[set] = None,
     sc_bands: Optional[List[Tuple[float, float]]] = None,
 ) -> Image.Image:
-    font_hd, font_md, font_sm, font_xs = fonts
+    font_hd, font_md, font_sm, font_xs, font_flag = fonts
     if ghost_indices is None:
         ghost_indices = set()
     if sc_bands is None:
         sc_bands = []
 
-    # Safety car / red flag: flash header background on even blink ticks
+    # Red flag header blinks; safety car header is solid (no blink)
     rf_blink = red_flag and (frame_idx // 12) % 2 == 0
-    sc_blink = (not red_flag) and sc_status > 0 and (frame_idx // 12) % 2 == 0
 
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
@@ -559,10 +579,12 @@ def _render_frame(
         draw.text((38, yc), team_str[:12], fill=TEXT, font=font_sm, anchor="lm")
 
     # ── header ────────────────────────────────────────────────────────────────
+    # Red flag: blink the header background between dark red and default.
+    # Safety car: solid yellow header, no blinking.
     if rf_blink:
         draw.rectangle([0, 0, W, HEADER_H - 2], fill=(80, 0, 0))
-    elif sc_blink:
-        draw.rectangle([0, 0, W, HEADER_H - 2], fill=(55, 44, 0))
+    elif sc_status > 0 and not red_flag:
+        draw.rectangle([0, 0, W, HEADER_H - 2], fill=(220, 180, 0))
 
     # Flag + track name in top-left of header
     if flag_img is not None:
@@ -578,14 +600,14 @@ def _render_frame(
               fill=TEXT, font=font_hd, anchor="mm")
 
     if red_flag:
-        # Prominent red flag indicator — blinks
-        rf_text = "RED FLAG"
-        rf_col  = (255, 80, 80) if rf_blink else (200, 40, 40)
-        draw.text((W - 14, HEADER_H // 2), rf_text, fill=rf_col, font=font_md, anchor="rm")
+        # Red flag: blinks, bright red text
+        rf_col = (255, 80, 80) if rf_blink else (200, 40, 40)
+        draw.text((W - 14, HEADER_H // 2), "RED FLAG", fill=rf_col, font=font_flag, anchor="rm")
     elif sc_status > 0:
-        label = SC_LABELS.get(sc_status, "SAFETY CAR")
-        draw.text((W - 14, HEADER_H // 2),
-                  f"SC: {label}", fill=SC_COL, font=font_md, anchor="rm")
+        # Safety car: solid yellow header, black label in top-right
+        sc_labels = {1: "Safety Car", 2: "Virtual Safety Car", 3: "Safety Car Ending"}
+        label = sc_labels.get(sc_status, "Safety Car")
+        draw.text((W - 14, HEADER_H // 2), label, fill=(0, 0, 0), font=font_flag, anchor="rm")
 
     # ── footer ────────────────────────────────────────────────────────────────
     draw.text((LEFT_W + LINE_AREA // 2, H - FOOTER_H // 2 + 8),
@@ -654,7 +676,7 @@ def build_mp4(
     rdfl_tl: List[Tuple[float, Optional[float]]] = rdfl_timeline if rdfl_timeline else []
     flag_img = _load_flag(track_id, track_name)
 
-    fonts = (_load_font(24), _load_font(14), _load_font(13), _load_font(11))
+    fonts = (_load_font(24), _load_font(14), _load_font(13), _load_font(11), _load_bold_font(28))
 
     n_cars = 0
     for t0 in times:
