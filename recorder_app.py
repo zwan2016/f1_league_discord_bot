@@ -62,7 +62,7 @@ def main() -> None:
     print("    UDP Format     : 2025")
     print("    UDP IP Address : 127.0.0.1  (same PC)  or your IP above (LAN)")
     print(f"    UDP Port       : {port}")
-    print("    UDP Send Rate  : 60Hz  (recommended)")
+    print("    UDP Send Rate  : 20Hz  (recommended)")
     print("=" * 70)
     print()
 
